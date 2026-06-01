@@ -12,7 +12,7 @@
   --border: rgba(9, 9, 11, 0.09);
   --fg: #18181b;
   --muted: #6b6b76;
-  --accent: #5b5bd6;
+  --accent: #2563eb;
   --accent-contrast: #ffffff;
 }
 
@@ -23,8 +23,8 @@
   --border: rgba(255, 255, 255, 0.08);
   --fg: #ededf0;
   --muted: #8c8c96;
-  --accent: #7c7cf0;
-  --accent-contrast: #0a0a0c;
+  --accent: #3b82f6;
+  --accent-contrast: #ffffff;
 }
 
 @theme inline {

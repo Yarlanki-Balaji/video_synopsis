@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import { api, errorDetail } from "@/lib/api";
-import { AuthShell, Field, SubmitButton } from "@/components/auth";
+import { AuthShell, Field, PasswordField, SubmitButton } from "@/components/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -46,7 +46,7 @@ export default function LoginPage() {
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <Field label="Email" type="email" value={email} onChange={setEmail} autoComplete="email" />
-        <Field label="Password" type="password" value={password} onChange={setPassword} autoComplete="current-password" />
+        <PasswordField label="Password" value={password} onChange={setPassword} autoComplete="current-password" />
         {error && <p className="text-sm text-red-600">{error}</p>}
         <SubmitButton busy={busy}>Log in</SubmitButton>
       </form>

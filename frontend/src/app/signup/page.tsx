@@ -5,19 +5,24 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import { api, errorDetail } from "@/lib/api";
-import { AuthShell, Field, SubmitButton } from "@/components/auth";
+import { AuthShell, Field, PasswordField, SubmitButton } from "@/components/auth";
 
 export default function SignupPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setBusy(true);
     setError(null);
+    if (password !== confirm) {
+      setError("Passwords don't match.");
+      return;
+    }
+    setBusy(true);
     try {
       const res = await api("/auth/signup", {
         method: "POST",
@@ -47,7 +52,8 @@ export default function SignupPage() {
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
         <Field label="Email" type="email" value={email} onChange={setEmail} autoComplete="email" />
-        <Field label="Password" type="password" value={password} onChange={setPassword} autoComplete="new-password" hint="At least 8 characters" />
+        <PasswordField label="Password" value={password} onChange={setPassword} autoComplete="new-password" hint="At least 8 characters" />
+        <PasswordField label="Confirm password" value={confirm} onChange={setConfirm} autoComplete="new-password" />
         {error && <p className="text-sm text-red-600">{error}</p>}
         <SubmitButton busy={busy}>Create account</SubmitButton>
       </form>
