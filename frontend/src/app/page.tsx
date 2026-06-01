@@ -60,12 +60,20 @@ export default function Home() {
                   Signed in as <span className="font-medium">{me.email}</span>
                 </span>
               </div>
-              <button
-                onClick={logout}
-                className="rounded-full border border-black/[.1] px-4 py-1.5 text-sm font-medium hover:bg-black/[.04] dark:border-white/[.15] dark:hover:bg-white/[.06]"
-              >
-                Log out
-              </button>
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/summarize"
+                  className="rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:opacity-90"
+                >
+                  Summarize
+                </Link>
+                <button
+                  onClick={logout}
+                  className="rounded-full border border-black/[.1] px-4 py-1.5 text-sm font-medium hover:bg-black/[.04] dark:border-white/[.15] dark:hover:bg-white/[.06]"
+                >
+                  Log out
+                </button>
+              </div>
             </div>
           ) : (
             <div className="flex items-center justify-between gap-4">
