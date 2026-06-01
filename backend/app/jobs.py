@@ -21,7 +21,7 @@ from sqlalchemy import select, update
 
 from .config import settings
 from .db import SessionLocal
-from .llm import RateLimited, RequestTooLarge, summarize as llm_summarize
+from .llm import RateLimited, RequestTooLarge, summarize_long as llm_summarize
 from .models import Job, JobStatus, Summary
 from .quota import open_breaker, record_tokens
 from .security import utcnow
