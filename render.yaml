@@ -1,0 +1,37 @@
+# Render Blueprint for the FastAPI backend.
+# Render > New > Blueprint, point at this repo. Set the `sync: false` secrets in
+# the dashboard (they're never committed). Postgres/Valkey come from Aiven.
+services:
+  - type: web
+    name: video-synopsis-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    # init-db creates tables (idempotent) before the server starts.
+    startCommand: python -m app.cli init-db && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.13.4"
+      - key: JWT_SECRET
+        generateValue: true          # Render generates a strong secret
+      - key: COOKIE_SAMESITE
+        value: lax                   # first-party via the Vercel proxy
+      - key: DATABASE_URL
+        sync: false                  # Aiven Postgres "Service URI"
+      - key: VALKEY_URL
+        sync: false                  # Aiven Valkey URI (optional for now)
+      - key: GROQ_API_KEY
+        sync: false                  # gsk_...
+      - key: RESEND_API_KEY
+        sync: false                  # required in production
+      - key: EMAIL_FROM
+        sync: false                  # e.g. "Video Synopsis <noreply@yourdomain>"
+      - key: CORS_ORIGINS
+        sync: false                  # your Vercel URL, e.g. https://your-app.vercel.app
+      - key: PUBLIC_APP_URL
+        sync: false                  # your Vercel URL (used in reset links)

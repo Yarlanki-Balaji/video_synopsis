@@ -38,11 +38,14 @@ def _make_engine():
         query.pop("channel_binding", None)  # asyncpg doesn't accept it
         url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
         if sslmode and sslmode != "disable":
-            connect_args["ssl"] = (
-                ssl_lib.create_default_context(cafile=settings.database_ssl_ca)
-                if settings.database_ssl_ca
-                else ssl_lib.create_default_context()
-            )
+            ctx = ssl_lib.create_default_context(cafile=settings.database_ssl_ca)
+            # libpq 'require' means encrypt without verifying the cert. Match that
+            # when no CA is supplied, so managed PG (Aiven) connects out of the box.
+            # Set DATABASE_SSL_CA + sslmode=verify-full for full verification.
+            if not settings.database_ssl_ca and sslmode in ("require", "prefer", "allow"):
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl_lib.CERT_NONE
+            connect_args["ssl"] = ctx
     elif url.startswith("sqlite"):
         connect_args["timeout"] = 30
     return create_async_engine(url, pool_pre_ping=True, connect_args=connect_args)

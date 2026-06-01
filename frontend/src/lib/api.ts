@@ -1,6 +1,8 @@
 // Thin wrapper around fetch for the FastAPI backend.
-// `credentials: "include"` is required so the httpOnly auth cookies are sent.
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Empty base => same-origin: /api and /auth are proxied to the backend by
+// next.config.ts rewrites, so cookies stay first-party. `credentials: "include"`
+// keeps working if you instead point NEXT_PUBLIC_API_URL straight at the backend.
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export async function api(path: string, init: RequestInit = {}): Promise<Response> {
   return fetch(`${API_URL}${path}`, {

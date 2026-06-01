@@ -54,6 +54,11 @@ npm install
 npm run dev
 ```
 
-Then open http://localhost:3000/signup and create an account (email + password).
+Copy `frontend/.env.local.example` → `frontend/.env.local` (sets `BACKEND_ORIGIN`
+so the frontend proxies `/api` and `/auth` to the backend). Then open
+http://localhost:3000/signup and create an account (email + password).
 
-Set `NEXT_PUBLIC_API_URL` for the frontend (see `frontend/.env.local.example`).
+## Deploy
+
+See **[DEPLOY.md](DEPLOY.md)** — Render (backend) + Vercel (frontend) + Aiven
+(Postgres/Valkey). The frontend proxies API calls so auth cookies stay first-party.
