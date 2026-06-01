@@ -50,6 +50,23 @@ python -m app.cli revoke someone@example.com
 State-changing browser requests must carry a trusted `Origin` (CSRF guard);
 the cookies are `httpOnly`. See `app/main.py` for the CSRF middleware.
 
+## Summarize (M2)
+
+```
+POST /api/summarize   { transcript_text, summary_types[], complete_notes? } -> { job_id, status }
+GET  /api/jobs/{id}    -> { status, phase, summaries: { type: markdown } }
+```
+
+Flow: validate → idempotency → content-bound cache → quota/breaker → enqueue. An
+in-process worker (`jobs.py`) runs the Groq calls; poll `GET /api/jobs/{id}` until
+`status == "done"`. Without `GROQ_API_KEY` a **dev stub** returns placeholder
+summaries so the whole pipeline works locally. Summaries are cached by transcript
+hash and shared safely (G4); per-user/global daily caps + a circuit breaker live in
+Postgres and fail closed (F5).
+
+> **Deferred (documented in code):** multi-process worker coordination (run one
+> worker, or use an external queue in prod), breaker half-open, token reservation.
+
 ## Layout
 
 ```
@@ -58,14 +75,18 @@ backend/
     main.py            # FastAPI app, CORS, CSRF middleware, startup checks
     config.py          # env-driven settings
     db.py              # async engine/session + Valkey + Base
-    models.py          # users, sessions, password_resets
+    models.py          # users, sessions, password_resets, jobs, summaries, usage
     security.py        # bcrypt, token hashing, JWT mint/verify
     deps.py            # get_current_user (auth guard)
     email.py           # console (dev) / Resend (prod)
+    llm.py             # Groq client (+ dev stub), JSON parse, URL strip (M2)
+    quota.py           # Postgres quotas + circuit breaker (M2)
+    jobs.py            # in-process worker + reaper (M2)
     cli.py             # revoke admin command
     routers/
       health.py        # /healthz, /readyz
       auth.py          # the auth endpoints above
+      summarize.py     # POST /api/summarize, GET /api/jobs/{id} (M2)
   requirements.txt
   .env.example
 ```

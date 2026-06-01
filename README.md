@@ -30,7 +30,9 @@ Following the milestone plan (`video_synopsis_final_plan.md` §8):
 - [x] **M1 — Auth & accounts:** open signup (email + password), login, JWT + rotated/hashed
   refresh tokens (reuse-detected), `token_version` revocation, CSRF, password reset;
   `/login` + `/signup` pages *(invite gate dropped — private-network deployment)*
-- [ ] **M2 — Job engine + Groq**
+- [x] **M2 — Job engine + Groq:** Postgres job ledger + in-process worker/reaper
+  (lease + fencing + heartbeat), Groq `gpt-oss-120b` client with dev stub, content-bound
+  cache, idempotency, Postgres quotas + circuit breaker; `POST /api/summarize` + `GET /api/jobs/{id}`
 - [ ] **M3 — Transcript capture**
 - [ ] **M4 — Frontend pages**
 - [ ] **M5 — Hardening + launch**

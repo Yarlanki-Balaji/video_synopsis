@@ -10,7 +10,8 @@ from fastapi.responses import JSONResponse
 
 from .config import settings
 from .db import init_models
-from .routers import auth, health
+from .jobs import start_worker, stop_worker
+from .routers import auth, health, summarize
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 
@@ -36,7 +37,13 @@ async def lifespan(app: FastAPI):
     # Dev convenience: auto-create tables. Production uses Alembic migrations.
     if not settings.is_production:
         await init_models()
-    yield
+
+    # In-process job worker (E2) lives in the web process.
+    await start_worker()
+    try:
+        yield
+    finally:
+        await stop_worker()
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -72,6 +79,7 @@ async def csrf_origin_guard(request: Request, call_next):
 
 app.include_router(health.router)
 app.include_router(auth.router)
+app.include_router(summarize.router)
 
 
 @app.get("/")

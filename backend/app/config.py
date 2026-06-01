@@ -38,6 +38,32 @@ class Settings(BaseSettings):
     email_from: str = "Video Synopsis <onboarding@resend.dev>"
     public_app_url: str = "http://localhost:3000"   # used to build password-reset links
 
+    # --- Groq / LLM (F1–F4) ---
+    # No key -> a deterministic dev stub is used so the pipeline runs locally.
+    groq_api_key: str | None = None
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_model: str = "openai/gpt-oss-120b"
+    llm_max_completion_tokens: int = 6000      # shared by reasoning + 5 summaries
+    llm_reasoning_effort: str = "low"          # gpt-oss-120b is a reasoning model
+    llm_temperature: float = 0.3
+    llm_timeout_seconds: int = 60
+
+    # --- Quotas + circuit breaker (Postgres-authoritative, F5) ---
+    per_user_daily_jobs: int = 10
+    global_daily_jobs: int = 50                # proxy for ~25–80 videos/day
+    global_daily_tokens: int = 200_000         # Groq free TPD
+    breaker_cooldown_minutes: int = 30         # after repeated Groq failures
+
+    # --- Transcript validation floors (D5, basic) ---
+    transcript_min_chars: int = 50
+    transcript_max_chars: int = 100_000
+
+    # --- Job worker (E2–E4) ---
+    job_lease_seconds: int = 180           # > worst-case single Groq call (+ repair)
+    job_max_attempts: int = 3
+    worker_poll_seconds: float = 1.0
+    reaper_interval_seconds: int = 60
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import AsyncGenerator, Optional
 
 import redis.asyncio as redis
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -23,7 +23,25 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_async_engine(settings.effective_database_url, pool_pre_ping=True)
+_is_sqlite = settings.effective_database_url.startswith("sqlite")
+
+engine = create_async_engine(
+    settings.effective_database_url,
+    pool_pre_ping=True,
+    connect_args={"timeout": 30} if _is_sqlite else {},
+)
+
+if _is_sqlite:
+    # WAL + a busy timeout let the background worker and web requests write
+    # concurrently without "database is locked" errors in local dev.
+    @event.listens_for(engine.sync_engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record):  # noqa: ANN001
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=30000")
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
