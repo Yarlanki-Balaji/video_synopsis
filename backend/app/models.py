@@ -1,8 +1,8 @@
 """SQLAlchemy models for auth & accounts (M1).
 
-Schema mirrors the build guide Part B:
+Schema (build guide Part B, minus the invite gate — signup is open for a
+private-network deployment):
   - users:           identity + allowlist status + token_version (B4/B5)
-  - invites:         single-use, short-lived, hashed at rest (B5)
   - sessions:        refresh tokens, hashed + rotated + family for reuse-detect (B3)
   - password_resets: single-use, short-lived, hashed at rest (B6)
 """
@@ -46,17 +46,6 @@ class User(Base):
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
-
-
-class Invite(Base):
-    __tablename__ = "invites"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    email: Mapped[str] = mapped_column(String(320), index=True)
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Session(Base):

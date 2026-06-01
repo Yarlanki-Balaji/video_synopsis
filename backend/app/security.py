@@ -1,7 +1,7 @@
 """Password hashing, opaque-token hashing, and JWT mint/verify.
 
 - Passwords: bcrypt (B1), capped at 72 bytes (bcrypt ignores the rest).
-- Opaque tokens (refresh / invite / reset): random, stored only as sha256 (B3).
+- Opaque tokens (refresh / reset): random, stored only as sha256 (B3).
 - Access tokens: JWT HS256 with the algorithm PINNED and exp/aud/sub required (B2).
 """
 from __future__ import annotations

@@ -27,7 +27,6 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 30
     refresh_token_ttl_days: int = 7
-    invite_ttl_hours: int = 72
     password_reset_ttl_minutes: int = 60
 
     # Cookie behaviour. "lax" is fine when web+api share a registrable domain
@@ -37,7 +36,7 @@ class Settings(BaseSettings):
     # --- Email ---
     resend_api_key: str | None = None
     email_from: str = "Video Synopsis <onboarding@resend.dev>"
-    public_app_url: str = "http://localhost:3000"   # used to build invite/reset links
+    public_app_url: str = "http://localhost:3000"   # used to build password-reset links
 
     @property
     def cors_origin_list(self) -> list[str]:

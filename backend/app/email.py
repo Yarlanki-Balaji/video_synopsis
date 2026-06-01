@@ -1,7 +1,7 @@
 """Transactional email (B6).
 
-No provider configured -> log the message (handy for local dev: the invite /
-reset link shows up in the server log). Set RESEND_API_KEY to send for real.
+No provider configured -> log the message (handy for local dev: the reset
+link shows up in the server log). Set RESEND_API_KEY to send for real.
 """
 from __future__ import annotations
 

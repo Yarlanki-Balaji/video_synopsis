@@ -1,9 +1,13 @@
 # Backend — FastAPI
 
-The summarizer API. **M1** adds auth & accounts (B1–B7): invite-gated signup,
-login, JWT access tokens, rotated/hashed refresh tokens with reuse detection,
-`token_version` revocation, an allowlist checked every request, CSRF origin
-checks, and password reset.
+The summarizer API. **M1** adds auth & accounts (B1–B7): open signup (email +
+password), login, JWT access tokens, rotated/hashed refresh tokens with reuse
+detection, `token_version` revocation, an allowlist status checked every request,
+CSRF origin checks, and password reset.
+
+> **Deviation from the build guide:** the invite gate (B5) is removed — this is a
+> private-network deployment with a known, limited set of users, so the closed-beta
+> budget protection isn't needed. Signup is open; users can still be revoked.
 
 ## Run locally (Windows PowerShell)
 
@@ -16,17 +20,16 @@ copy .env.example .env          # optional; defaults work for local dev
 uvicorn app.main:app --reload --port 8000
 ```
 
-- Local dev uses a **SQLite** file (`dev.db`) and **console email** (invite/reset
-  links print to the server log). Set `DATABASE_URL` (Aiven Postgres) and
+- Local dev uses a **SQLite** file (`dev.db`) and **console email** (reset links
+  print to the server log). Set `DATABASE_URL` (Aiven Postgres) and
   `RESEND_API_KEY` for real deployments.
 - http://localhost:8000/healthz · /readyz · /docs
 
-## Invite a tester, then sign up
+## Sign up
+
+Open http://localhost:3000/signup and create an account with email + password.
 
 ```powershell
-# prints an invite token + a /signup?email=...&invite=... link (also "emails" it)
-python -m app.cli invite someone@example.com
-
 # de-allowlist a user (revokes access immediately):
 python -m app.cli revoke someone@example.com
 ```
@@ -35,7 +38,7 @@ python -m app.cli revoke someone@example.com
 
 | Method & path | Purpose |
 |---|---|
-| `POST /auth/signup` | redeem invite + create account, auto-login |
+| `POST /auth/signup` | create account (email + password), auto-login |
 | `POST /auth/login` | email + password → sets cookies |
 | `POST /auth/refresh` | rotate refresh token (reuse → revoke family) |
 | `POST /auth/logout` | revoke current session family + clear cookies |
@@ -55,11 +58,11 @@ backend/
     main.py            # FastAPI app, CORS, CSRF middleware, startup checks
     config.py          # env-driven settings
     db.py              # async engine/session + Valkey + Base
-    models.py          # users, invites, sessions, password_resets
+    models.py          # users, sessions, password_resets
     security.py        # bcrypt, token hashing, JWT mint/verify
     deps.py            # get_current_user (auth guard)
     email.py           # console (dev) / Resend (prod)
-    cli.py             # invite / revoke admin commands
+    cli.py             # revoke admin command
     routers/
       health.py        # /healthz, /readyz
       auth.py          # the auth endpoints above

@@ -27,9 +27,9 @@ Chrome MV3 extension + hosted transcript API + paste · Sentry.
 Following the milestone plan (`video_synopsis_final_plan.md` §8):
 
 - [x] **M0 — Scaffold:** backend + frontend skeletons, `/healthz`
-- [x] **M1 — Auth & accounts:** invite-gated signup, login, JWT + rotated/hashed
+- [x] **M1 — Auth & accounts:** open signup (email + password), login, JWT + rotated/hashed
   refresh tokens (reuse-detected), `token_version` revocation, CSRF, password reset;
-  `/login` + `/signup` pages
+  `/login` + `/signup` pages *(invite gate dropped — private-network deployment)*
 - [ ] **M2 — Job engine + Groq**
 - [ ] **M3 — Transcript capture**
 - [ ] **M4 — Frontend pages**
@@ -52,11 +52,6 @@ npm install
 npm run dev
 ```
 
-Then invite yourself and sign up (the invite link is printed by the CLI):
-
-```powershell
-cd backend; python -m app.cli invite you@example.com
-# open the printed /signup?email=...&invite=... link → create account → you're logged in
-```
+Then open http://localhost:3000/signup and create an account (email + password).
 
 Set `NEXT_PUBLIC_API_URL` for the frontend (see `frontend/.env.local.example`).

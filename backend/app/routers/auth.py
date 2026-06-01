@@ -1,7 +1,7 @@
 """Auth & accounts endpoints (B1–B7).
 
 Routes (prefix /auth):
-  POST /signup                 redeem invite + create account, auto-login
+  POST /signup                 create account (email + password), auto-login
   POST /login                  email + password -> set cookies
   POST /refresh                rotate refresh token (reuse -> revoke family)
   POST /logout                 revoke current session family + clear cookies
@@ -33,7 +33,7 @@ from ..config import settings
 from ..db import get_session
 from ..deps import get_current_user
 from ..email import send_email
-from ..models import ClientType, Invite, PasswordReset, Session, User, UserStatus
+from ..models import ClientType, PasswordReset, Session, User, UserStatus
 from ..security import (
     create_access_token,
     dummy_verify,
@@ -57,7 +57,6 @@ REFRESH_PATH = "/auth"  # refresh cookie is only sent to /auth/* routes
 class SignupIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    invite_token: str
 
 
 class LoginIn(BaseModel):
@@ -129,33 +128,23 @@ async def _issue_session(
 async def signup(body: SignupIn, response: Response, session: AsyncSession = Depends(get_session)):
     email = normalize_email(body.email)
 
-    invite = (
-        await session.execute(select(Invite).where(Invite.token_hash == hash_token(body.invite_token)))
+    existing = (
+        await session.execute(select(User).where(User.email == email))
     ).scalar_one_or_none()
-    if (
-        invite is None
-        or invite.expires_at < utcnow()
-        or normalize_email(invite.email) != email
-    ):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired invite")
-
-    # Atomically claim the invite so two concurrent signups can't both redeem it.
-    claimed = await session.execute(
-        update(Invite).where(Invite.id == invite.id, Invite.used_at.is_(None)).values(used_at=utcnow())
-    )
-    if claimed.rowcount != 1:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired invite")
+    if existing is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Account already exists")
 
     user = User(
         email=email,
         password_hash=hash_password(body.password),
         status=UserStatus.active.value,
-        email_verified_at=utcnow(),  # the invite proves mailbox ownership (B5)
+        email_verified_at=utcnow(),
     )
     session.add(user)
     try:
         await session.flush()  # triggers the unique-email INSERT
     except IntegrityError:
+        # Race: another signup created the same email between the check and flush.
         await session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Account already exists")
 

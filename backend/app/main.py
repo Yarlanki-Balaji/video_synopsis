@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
         if settings.jwt_secret == "dev-insecure-secret-change-me" or len(settings.jwt_secret) < 32:
             raise RuntimeError("JWT_SECRET must be a strong (>=32 char) value in production")
         if not settings.resend_api_key:
-            # Console email mode logs reset/invite tokens — unsafe in production.
+            # Console email mode logs reset tokens — unsafe in production.
             raise RuntimeError("RESEND_API_KEY is required in production")
 
     # Dev convenience: auto-create tables. Production uses Alembic migrations.

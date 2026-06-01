@@ -45,7 +45,7 @@ export default function Home() {
             Video Synopsis AI
           </h1>
           <p className="text-zinc-600 dark:text-zinc-400">
-            Invite-only beta. Sign in to summarize videos.
+            Sign in to summarize videos.
           </p>
         </div>
 
