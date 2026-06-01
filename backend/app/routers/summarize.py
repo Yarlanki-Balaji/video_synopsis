@@ -133,6 +133,29 @@ async def summarize(
     return SummarizeOut(job_id=job.id, status=job.status)
 
 
+@router.get("/jobs")
+async def list_jobs(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    rows = (
+        await session.execute(
+            select(Job).where(Job.user_id == user.id).order_by(Job.created_at.desc()).limit(50)
+        )
+    ).scalars().all()
+    return [
+        {
+            "job_id": j.id,
+            "status": j.status,
+            "created_at": j.created_at.isoformat(),
+            "summary_types": [t for t in j.summary_types.split(",") if t],
+            "complete_notes": j.complete_notes,
+            "preview": (j.transcript[:80] + "…") if len(j.transcript) > 80 else j.transcript,
+        }
+        for j in rows
+    ]
+
+
 @router.get("/jobs/{job_id}")
 async def get_job(
     job_id: str,

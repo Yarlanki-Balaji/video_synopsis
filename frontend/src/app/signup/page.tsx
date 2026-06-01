@@ -24,7 +24,7 @@ export default function SignupPage() {
         body: JSON.stringify({ email, password }),
       });
       if (!res.ok) throw new Error(await errorDetail(res, "Signup failed"));
-      router.push("/");
+      router.push("/summarize");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
