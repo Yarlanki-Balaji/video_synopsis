@@ -44,10 +44,13 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_model: str = "openai/gpt-oss-120b"
-    llm_max_completion_tokens: int = 6000      # shared by reasoning + 5 summaries
+    llm_max_completion_tokens: int = 3000      # shared by reasoning + 5 summaries
     llm_reasoning_effort: str = "low"          # gpt-oss-120b is a reasoning model
     llm_temperature: float = 0.3
     llm_timeout_seconds: int = 60
+    # Free-tier tokens-per-minute ceiling (input + max output must fit one request).
+    groq_tpm_limit: int = 8000
+    llm_prompt_overhead_tokens: int = 1200     # reserve for system/instructions + margin
 
     # --- Quotas + circuit breaker (Postgres-authoritative, F5) ---
     per_user_daily_jobs: int = 10

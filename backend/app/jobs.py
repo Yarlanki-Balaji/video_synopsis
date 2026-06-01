@@ -21,7 +21,7 @@ from sqlalchemy import select, update
 
 from .config import settings
 from .db import SessionLocal
-from .llm import RateLimited, summarize as llm_summarize
+from .llm import RateLimited, RequestTooLarge, summarize as llm_summarize
 from .models import Job, JobStatus, Summary
 from .quota import open_breaker, record_tokens
 from .security import utcnow
@@ -149,12 +149,12 @@ async def _persist(job_id: str, fence: int, results: dict[str, str], tokens: int
         return True
 
 
-async def _fail(job_id: str, fence: int, message: str, *, breaker: bool) -> None:
+async def _fail(job_id: str, fence: int, message: str, *, breaker: bool = False, permanent: bool = False) -> None:
     async with SessionLocal() as session:
         job = await session.get(Job, job_id)
         if job is None or job.lease_count != fence:
             return
-        if job.attempts >= settings.job_max_attempts:
+        if permanent or job.attempts >= settings.job_max_attempts:
             values = dict(status=JobStatus.error.value, phase="error")
         else:
             values = dict(status=JobStatus.queued.value, phase="requeued")
@@ -204,6 +204,13 @@ async def _run_job(job_id: str, fence: int) -> None:
                 r = await llm_summarize(transcript, ["notes"])
             if not await _persist(job_id, fence, {"notes": r.content["notes"]}, r.tokens_used, **common):
                 return
+    except RequestTooLarge:
+        await _fail(
+            job_id, fence,
+            "Transcript is too large for the model's per-request limit. Try a shorter transcript.",
+            permanent=True,
+        )
+        return
     except RateLimited as exc:
         await _fail(job_id, fence, str(exc), breaker=True)
         return

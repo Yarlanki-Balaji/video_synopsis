@@ -11,7 +11,7 @@ a closed-beta app where an invited user pastes/links a YouTube video and gets AI
 ---
 
 ## Part 0 — How to read this guide
-
+    
 ### 0.1 The four questions (used for every component)
 1. **How it works (in which manner)** — the mechanics, in plain English, with a tiny snippet where it helps.
 2. **How it relates to your project** — what it actually does for *this* video summarizer.
@@ -339,24 +339,17 @@ sleeps after 15 min idle).
   instance (audit **R29/R30**).
 - **Later:** smarter per-tier limits; bot detection.
 
+
 ---
 
 # Part D — Transcript acquisition (the hardest part)
 
 Getting the transcript is genuinely the trickiest piece, because **YouTube blocks servers** from fetching
-captions directly (datacenter IPs are blocked, and captions now need a "PO token" that only a real browser
-produces). So the transcript comes from a **specialized provider** (a managed transcript API that does the
-proxying for us) or the **user's side** — never from your Render server hitting YouTube directly.
+captions (datacenter IPs are blocked, and captions now need a "PO token" that only a real browser produces).
+So the transcript has to come from the **user's side** or a **specialized provider** — never from your Render
+server directly.
 
-> **⚡ NoteGPT-parity decision (priority for this build):** to match NoteGPT's "paste a URL, no extension," the
-> **managed transcript API (D2) is the PRIMARY path for everyone** (desktop + mobile), **paste (D3) is the
-> fallback**, and the **browser extension (D1) is an OPTIONAL desktop power-user path** (it conserves the API's
-> free monthly quota) — *not* required to launch. This also de-risks the Chrome Web Store review (**R36**) and
-> shrinks the cache-poisoning cluster (the trusted API is the primary source; paste/extension stay user-scoped).
-> Read D1–D3 below with that order in mind (D2 first). Perceived speed comes from **streaming** (Part F3) +
-> **caching** (Part G4), not from a faster transcript fetch.
-
-## D1 — Browser extension (desktop capture, *optional*) [F1]
+## D1 — Browser extension (desktop capture) [F1]
 - **How it works:** a Chrome **Manifest V3** extension runs on the YouTube page. A script in the page's own
   context reads the player's caption data and fetches the caption text **same-origin** (YouTube→YouTube, on the
   *user's* home internet, which isn't blocked). It hands the text to the extension's background **service worker**,
@@ -632,9 +625,8 @@ and how you fix it fast.
 
 ## H3 — Health check + invariant monitoring
 - **How it works:** a `/healthz` endpoint that internally asserts "DB reachable, Valkey reachable, breaker age
-  sane, oldest in-progress job not too old," pinged by a free external monitor (**cron-job.org / UptimeRobot**) every
-  **~14 min to DELIBERATELY keep the instance warm 24/7** — this is the chosen **free cold-start fix** (744 of 750 free
-  hrs/month → fits for exactly ONE service; dedicate the workspace to it, run two pingers, alert at ~700 hrs).
+  sane, oldest in-progress job not too old," pinged by a free external monitor (UptimeRobot) — but at a cadence
+  that **doesn't keep the instance awake** (respecting the 750-hour budget).
 - **Relation to your project:** the failures that hurt most are **silent** (wedged queue, stuck breaker, disk
   creeping full), which exceptions don't catch.
 - **Advantage:** you get an email when an invariant breaks, not a user complaint hours later.
