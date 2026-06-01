@@ -1,77 +1,96 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
-// Inlined at build time; falls back to the local backend in dev.
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+import { api } from "@/lib/api";
 
-type Health = { status: string; service: string; environment: string };
+type Me = { id: string; email: string; status: string };
 
 export default function Home() {
-  const [state, setState] = useState<"loading" | "ok" | "error">("loading");
-  const [health, setHealth] = useState<Health | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
-    fetch(`${API_URL}/healthz`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json() as Promise<Health>;
-      })
-      .then((data) => {
-        if (!active) return;
-        setHealth(data);
-        setState("ok");
-      })
-      .catch(() => active && setState("error"));
+    (async () => {
+      try {
+        const res = await api("/auth/me");
+        const data = res.ok ? ((await res.json()) as Me) : null;
+        if (active) setMe(data);
+      } catch {
+        if (active) setMe(null);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
     return () => {
       active = false;
     };
   }, []);
 
-  const pill = {
-    loading: { dot: "bg-amber-400", text: "Connecting…", tone: "text-amber-600" },
-    ok: { dot: "bg-emerald-500", text: "Backend connected", tone: "text-emerald-600" },
-    error: { dot: "bg-red-500", text: "Backend unreachable", tone: "text-red-600" },
-  }[state];
+  async function logout() {
+    await api("/auth/logout", { method: "POST" });
+    setMe(null);
+  }
 
   return (
     <div className="flex flex-1 items-center justify-center bg-zinc-50 px-6 py-24 font-sans dark:bg-black">
       <main className="flex w-full max-w-xl flex-col gap-8 rounded-2xl border border-black/[.06] bg-white p-10 shadow-sm dark:border-white/[.08] dark:bg-zinc-950">
         <div className="flex flex-col gap-2">
           <span className="text-xs font-medium uppercase tracking-widest text-zinc-400">
-            M0 · Scaffold
+            M1 · Auth
           </span>
           <h1 className="text-3xl font-semibold tracking-tight text-black dark:text-zinc-50">
             Video Synopsis AI
           </h1>
           <p className="text-zinc-600 dark:text-zinc-400">
-            Frontend (Next.js) and backend (FastAPI) are wired up. The card below
-            pings the API&apos;s <code className="rounded bg-black/[.05] px-1 dark:bg-white/[.08]">/healthz</code>{" "}
-            to confirm they talk to each other.
+            Invite-only beta. Sign in to summarize videos.
           </p>
         </div>
 
-        <div className="flex items-center justify-between rounded-xl border border-black/[.06] bg-zinc-50 px-5 py-4 dark:border-white/[.08] dark:bg-black">
-          <div className="flex items-center gap-3">
-            <span className={`h-2.5 w-2.5 rounded-full ${pill.dot}`} />
-            <span className={`font-medium ${pill.tone}`}>{pill.text}</span>
-          </div>
-          <code className="text-xs text-zinc-500">{API_URL}</code>
+        <div className="rounded-xl border border-black/[.06] bg-zinc-50 px-5 py-4 dark:border-white/[.08] dark:bg-black">
+          {loading ? (
+            <p className="text-sm text-zinc-500">Checking session…</p>
+          ) : me ? (
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                <span className="text-sm">
+                  Signed in as <span className="font-medium">{me.email}</span>
+                </span>
+              </div>
+              <button
+                onClick={logout}
+                className="rounded-full border border-black/[.1] px-4 py-1.5 text-sm font-medium hover:bg-black/[.04] dark:border-white/[.15] dark:hover:bg-white/[.06]"
+              >
+                Log out
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-sm text-zinc-500">Not signed in</span>
+              <div className="flex gap-2">
+                <Link
+                  href="/login"
+                  className="rounded-full bg-foreground px-4 py-1.5 text-sm font-medium text-background hover:opacity-90"
+                >
+                  Log in
+                </Link>
+                <Link
+                  href="/signup"
+                  className="rounded-full border border-black/[.1] px-4 py-1.5 text-sm font-medium hover:bg-black/[.04] dark:border-white/[.15] dark:hover:bg-white/[.06]"
+                >
+                  Sign up
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
 
-        {health && (
-          <pre className="overflow-x-auto rounded-xl bg-black/[.04] p-4 text-xs text-zinc-700 dark:bg-white/[.06] dark:text-zinc-300">
-            {JSON.stringify(health, null, 2)}
-          </pre>
-        )}
-
-        {state === "error" && (
-          <p className="text-sm text-zinc-500">
-            Start the API: <code>cd backend</code> →{" "}
-            <code>uvicorn app.main:app --reload --port 8000</code>
-          </p>
-        )}
+        <p className="text-xs text-zinc-400">
+          Next: M2 job engine + Groq, then M3 transcript capture, then the summarize page.
+        </p>
       </main>
     </div>
   );
