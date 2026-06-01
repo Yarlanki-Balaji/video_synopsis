@@ -1,5 +1,9 @@
 """Tiny admin CLI for local/beta operations.
 
+Create the database schema (run once on a fresh production database):
+
+    python -m app.cli init-db
+
 Revoke a user (de-allowlist; bumps token_version so their tokens die now):
 
     python -m app.cli revoke someone@example.com
@@ -39,11 +43,21 @@ async def revoke_user(email: str) -> None:
         print(f"Revoked {email}")
 
 
+async def init_db() -> None:
+    await init_models()
+    print("Schema is ready (tables created or already present).")
+
+
 def main() -> None:
-    if len(sys.argv) != 3 or sys.argv[1] != "revoke":
-        print(__doc__)
-        raise SystemExit(1)
-    asyncio.run(revoke_user(sys.argv[2]))
+    args = sys.argv[1:]
+    if args == ["init-db"]:
+        asyncio.run(init_db())
+        return
+    if len(args) == 2 and args[0] == "revoke":
+        asyncio.run(revoke_user(args[1]))
+        return
+    print(__doc__)
+    raise SystemExit(1)
 
 
 if __name__ == "__main__":

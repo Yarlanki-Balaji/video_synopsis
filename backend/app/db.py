@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from typing import AsyncGenerator, Optional
 
+import ssl as ssl_lib
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
 import redis.asyncio as redis
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import (
@@ -23,13 +26,31 @@ class Base(DeclarativeBase):
     pass
 
 
+def _make_engine():
+    """Build the async engine, translating managed-Postgres SSL params (asyncpg
+    uses an `ssl` connect arg, not the libpq `?sslmode=` URL param)."""
+    url = settings.effective_database_url
+    connect_args: dict = {}
+    if url.startswith("postgresql"):
+        parts = urlsplit(url)
+        query = dict(parse_qsl(parts.query))
+        sslmode = query.pop("sslmode", None)
+        query.pop("channel_binding", None)  # asyncpg doesn't accept it
+        url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+        if sslmode and sslmode != "disable":
+            connect_args["ssl"] = (
+                ssl_lib.create_default_context(cafile=settings.database_ssl_ca)
+                if settings.database_ssl_ca
+                else ssl_lib.create_default_context()
+            )
+    elif url.startswith("sqlite"):
+        connect_args["timeout"] = 30
+    return create_async_engine(url, pool_pre_ping=True, connect_args=connect_args)
+
+
 _is_sqlite = settings.effective_database_url.startswith("sqlite")
 
-engine = create_async_engine(
-    settings.effective_database_url,
-    pool_pre_ping=True,
-    connect_args={"timeout": 30} if _is_sqlite else {},
-)
+engine = _make_engine()
 
 if _is_sqlite:
     # WAL + a busy timeout let the background worker and web requests write

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     # Optional infra. database_url unset -> local SQLite (see effective_database_url).
     database_url: str | None = None   # e.g. postgresql://user:pass@host:port/db
+    database_ssl_ca: str | None = None  # path to a CA cert for managed PG (e.g. Aiven)
     valkey_url: str | None = None     # e.g. rediss://default:pass@host:port
 
     # Comma-separated list of frontend origins allowed by CORS *and* CSRF.
