@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.*.example
 
 # --- Python (FastAPI backend) ---
 __pycache__/
