@@ -9,7 +9,7 @@ import rehypeSanitize from "rehype-sanitize";
 // (the summaries come from an LLM fed untrusted transcript text and are shared).
 export function Markdown({ children }: { children: string }) {
   return (
-    <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold">
+    <div className="prose prose-sm max-w-none prose-headings:font-semibold prose-headings:tracking-tight">
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
         {children}
       </ReactMarkdown>

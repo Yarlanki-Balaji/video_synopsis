@@ -121,24 +121,32 @@ class _Heartbeat:
                 pass
 
 
-async def _persist(job_id: str, fence: int, results: dict[str, str], tokens: int, *, tsha, lang, source, video_id) -> bool:
+async def _persist(job_id: str, fence: int, results: dict[str, str], tokens: int, *, tsha, lang, source, video_id, force: bool = False) -> bool:
     """Persist generated summaries + token usage, gated on the fence. Single
-    worker means no concurrent writers, so a plain insert-if-missing is enough."""
+    worker means no concurrent writers, so insert-if-missing is enough — except
+    a forced regenerate OVERWRITES the existing row in place (so the old content
+    stays readable until the new content commits; a failed regen never leaves a
+    hole, and another user's completed job is never emptied)."""
     async with SessionLocal() as session:
         job = await session.get(Job, job_id)
         if job is None or job.lease_count != fence:
             return False  # we were re-leased — abandon (results are stale)
-        existing = set(
-            (
+        existing = {
+            r.type: r
+            for r in (
                 await session.execute(
-                    select(Summary.type).where(
+                    select(Summary).where(
                         Summary.transcript_sha256 == tsha, Summary.lang == lang
                     )
                 )
             ).scalars().all()
-        )
+        }
         for type_, content in results.items():
-            if type_ in existing:
+            row = existing.get(type_)
+            if row is not None:
+                if force:  # regenerate: replace the cached content in place
+                    row.content = content
+                    row.source = source
                 continue
             session.add(
                 Summary(transcript_sha256=tsha, video_id=video_id, type=type_, lang=lang, content=content, source=source)
@@ -176,6 +184,7 @@ async def _run_job(job_id: str, fence: int) -> None:
         transcript, tsha, lang, source, video_id = (
             job.transcript, job.transcript_sha256, job.lang, job.source, job.video_id
         )
+        force = job.force
         light_types = [t for t in job.summary_types.split(",") if t]
         want_notes = job.complete_notes
         existing = set(
@@ -186,9 +195,10 @@ async def _run_job(job_id: str, fence: int) -> None:
             ).scalars().all()
         )
 
-    missing_light = [t for t in light_types if t not in existing]
-    need_notes = want_notes and "notes" not in existing
-    common = dict(tsha=tsha, lang=lang, source=source, video_id=video_id)
+    # A forced regenerate re-runs every requested type even if cached.
+    missing_light = light_types if force else [t for t in light_types if t not in existing]
+    need_notes = want_notes if force else (want_notes and "notes" not in existing)
+    common = dict(tsha=tsha, lang=lang, source=source, video_id=video_id, force=force)
 
     try:
         if missing_light:

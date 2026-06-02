@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import { api, errorDetail } from "@/lib/api";
-import { AuthShell, Field, PasswordField, SubmitButton } from "@/components/auth";
+import { AuthShell, AuthError, Field, PasswordField, SubmitButton } from "@/components/auth";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -40,11 +40,11 @@ export default function SignupPage() {
   return (
     <AuthShell
       title="Create your account"
-      subtitle="Sign up to start summarizing videos."
+      subtitle="Sign up to start turning transcripts into summaries."
       footer={
         <>
           Already have an account?{" "}
-          <Link href="/login" className="font-medium underline">
+          <Link href="/login" className="font-medium text-accent-text hover:underline">
             Log in
           </Link>
         </>
@@ -54,7 +54,7 @@ export default function SignupPage() {
         <Field label="Email" type="email" value={email} onChange={setEmail} autoComplete="email" />
         <PasswordField label="Password" value={password} onChange={setPassword} autoComplete="new-password" hint="At least 8 characters" />
         <PasswordField label="Confirm password" value={confirm} onChange={setConfirm} autoComplete="new-password" />
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <AuthError>{error}</AuthError>}
         <SubmitButton busy={busy}>Create account</SubmitButton>
       </form>
     </AuthShell>

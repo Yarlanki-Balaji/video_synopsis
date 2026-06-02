@@ -4,44 +4,184 @@
 /* Toggle dark mode via data-theme on <html> (set by the theme toggle). */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
+/* ------------------------------------------------------------------------- *
+ * Design system — "Aurora Glass": calm warm-neutral surfaces, a disciplined
+ * indigo→violet→rose accent ramp used only inside gradients/glow, layered soft
+ * shadows + a 1px inset top highlight for depth. All values WCAG-AA verified.
+ * Token contract is additive: existing names (--bg, --surface, --surface-2,
+ * --border, --fg, --muted, --accent, --accent-contrast) are preserved.
+ * ------------------------------------------------------------------------- */
+
 :root,
 [data-theme="light"] {
-  --bg: #fafafa;
+  --bg: #fbfaf9;
   --surface: #ffffff;
-  --surface-2: #f4f4f5;
-  --border: rgba(9, 9, 11, 0.09);
-  --fg: #18181b;
-  --muted: #6b6b76;
+  --surface-2: #f4f4f6;
+  --surface-3: #ededf1;
+  --elevated: #ffffff;
+  --border: rgba(24, 20, 38, 0.10);
+  --border-strong: rgba(24, 20, 38, 0.16);
+  --fg: #1c1c22;
+  --muted: #5d5d68;
   --accent: #2563eb;
+  --accent-strong: #1d4ed8; /* button fills — white text 6.70:1 (AA) */
+  --accent-2: #7c4ddb;
+  --accent-3: #d8568a;
+  --accent-soft: rgba(37, 99, 235, 0.10);
+  --accent-text: #1d4ed8; /* accent-as-text 6.70:1 on surface */
   --accent-contrast: #ffffff;
+  --ring: #2563eb;
+  --glow: rgba(86, 76, 220, 0.22);
+  --highlight: rgba(255, 255, 255, 0.85);
+  --glass-bg: rgba(255, 255, 255, 0.68);
+  --glass-border: rgba(24, 20, 38, 0.08);
+  --success: #15803d;
+  --warn: #b45309;
+  --danger: #b42318;
+  --success-soft: rgba(21, 128, 61, 0.10);
+  --warn-soft: rgba(180, 83, 9, 0.10);
+  --danger-soft: rgba(180, 35, 24, 0.10);
+  --scrim: rgba(24, 20, 38, 0.40);
+  color-scheme: light;
+
+  /* Theme-resolved aliases (light variants). */
+  --shadow-xs: var(--shadow-xs-light);
+  --shadow-sm: var(--shadow-sm-light);
+  --shadow-md: var(--shadow-md-light);
+  --shadow-lg: var(--shadow-lg-light);
+  --shadow-card: var(--shadow-card-light);
+  --shadow-accent-glow: var(--shadow-accent-glow-light);
+  --shadow-focus: var(--shadow-focus-light);
+  --shadow-inset-glass: var(--shadow-inset-glass-light);
+  --hero: var(--gradient-hero-light);
 }
 
 [data-theme="dark"] {
-  --bg: #0a0a0c;
-  --surface: #141417;
-  --surface-2: #1b1b20;
-  --border: rgba(255, 255, 255, 0.08);
-  --fg: #ededf0;
-  --muted: #8c8c96;
+  --bg: #0a0a0d;
+  --surface: #141418;
+  --surface-2: #1c1c22;
+  --surface-3: #24242c;
+  --elevated: #1f1f27;
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --fg: #ececed;
+  --muted: #9a9aa6;
   --accent: #3b82f6;
+  --accent-strong: #4361ee; /* button fills — white text 5.02:1 (AA) */
+  --accent-2: #a784ff;
+  --accent-3: #ff85b3;
+  --accent-soft: rgba(59, 130, 246, 0.16);
+  --accent-text: #7ea6ff; /* accent-as-text 7.69:1 on surface */
   --accent-contrast: #ffffff;
+  --ring: #7ea6ff;
+  --glow: rgba(120, 110, 255, 0.34);
+  --highlight: rgba(255, 255, 255, 0.06);
+  --glass-bg: rgba(20, 20, 25, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.10);
+  --success: #4ade80;
+  --warn: #fbbf24;
+  --danger: #ff938a;
+  --success-soft: rgba(74, 222, 128, 0.14);
+  --warn-soft: rgba(251, 191, 36, 0.14);
+  --danger-soft: rgba(255, 147, 138, 0.14);
+  --scrim: rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+
+  /* Theme-resolved aliases (dark variants). */
+  --shadow-xs: var(--shadow-xs-dark);
+  --shadow-sm: var(--shadow-sm-dark);
+  --shadow-md: var(--shadow-md-dark);
+  --shadow-lg: var(--shadow-lg-dark);
+  --shadow-card: var(--shadow-card-dark);
+  --shadow-accent-glow: var(--shadow-accent-glow-dark);
+  --shadow-focus: var(--shadow-focus-dark);
+  --shadow-inset-glass: var(--shadow-inset-glass-dark);
+  --hero: var(--gradient-hero-dark);
 }
 
+/* Theme-agnostic primitives (gradients resolve against the active theme's tokens). */
+:root {
+  --gradient-accent: linear-gradient(135deg, var(--accent-strong) 0%, var(--accent-2) 100%);
+  --gradient-logo: linear-gradient(135deg, var(--accent-strong) 0%, var(--accent-2) 55%, var(--accent-3) 100%);
+  --gradient-hero-light: radial-gradient(60% 80% at 18% 0%, rgba(37, 99, 235, 0.12) 0%, rgba(37, 99, 235, 0) 60%), radial-gradient(55% 70% at 82% 8%, rgba(216, 86, 138, 0.10) 0%, rgba(216, 86, 138, 0) 62%), radial-gradient(70% 90% at 50% -10%, rgba(124, 77, 219, 0.10) 0%, rgba(124, 77, 219, 0) 65%);
+  --gradient-hero-dark: radial-gradient(1200px 600px at 15% -10%, rgba(67, 97, 238, 0.18), transparent 60%), radial-gradient(900px 500px at 100% 0%, rgba(167, 132, 255, 0.16), transparent 55%), linear-gradient(180deg, #0c0c11 0%, #0a0a0d 100%);
+  --grad-sheen: linear-gradient(180deg, var(--highlight) 0%, rgba(255, 255, 255, 0) 14%);
+  --grad-glow-radial: radial-gradient(60% 60% at 50% 0%, var(--glow) 0%, transparent 70%);
+  --grad-divider: linear-gradient(90deg, transparent 0%, var(--border-strong) 50%, transparent 100%);
+  --grad-skeleton: linear-gradient(90deg, var(--surface-2) 0%, var(--surface-3) 50%, var(--surface-2) 100%);
+
+  /* Shadow scale — light + dark literals; aliases above pick per theme. */
+  --shadow-xs-light: 0 1px 2px rgba(24, 20, 38, 0.06);
+  --shadow-sm-light: 0 1px 2px rgba(24, 20, 38, 0.06), 0 2px 6px rgba(24, 20, 38, 0.06);
+  --shadow-md-light: 0 2px 4px rgba(24, 20, 38, 0.05), 0 8px 20px rgba(24, 20, 38, 0.08);
+  --shadow-lg-light: 0 4px 8px rgba(24, 20, 38, 0.06), 0 18px 44px rgba(24, 20, 38, 0.12);
+  --shadow-card-light: inset 0 1px 0 var(--highlight), 0 1px 2px rgba(24, 20, 38, 0.05), 0 6px 18px rgba(24, 20, 38, 0.07);
+  --shadow-accent-glow-light: 0 1px 2px rgba(29, 78, 216, 0.20), 0 8px 22px -6px var(--glow), 0 0 0 1px rgba(37, 99, 235, 0.10);
+  --shadow-focus-light: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring), 0 0 0 10px var(--glow);
+  --shadow-inset-glass-light: inset 0 1px 0 rgba(255, 255, 255, 0.70);
+  --shadow-xs-dark: 0 1px 2px rgba(0, 0, 0, 0.40);
+  --shadow-sm-dark: 0 1px 2px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md-dark: 0 2px 6px rgba(0, 0, 0, 0.45), 0 10px 28px -8px rgba(0, 0, 0, 0.55);
+  --shadow-lg-dark: 0 6px 16px rgba(0, 0, 0, 0.50), 0 24px 60px -16px rgba(0, 0, 0, 0.65);
+  --shadow-card-dark: inset 0 1px 0 var(--highlight), 0 1px 2px rgba(0, 0, 0, 0.50), 0 8px 24px -6px rgba(0, 0, 0, 0.45);
+  --shadow-accent-glow-dark: 0 0 0 1px rgba(91, 130, 246, 0.30), 0 8px 28px -6px var(--glow), 0 0 32px -4px var(--glow);
+  --shadow-focus-dark: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring), 0 0 22px -2px var(--glow);
+  --shadow-inset-glass-dark: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+
+  /* Radii + motion. */
+  --radius-card: 16px;
+  --radius-field: 10px;
+  --radius-button: 10px;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 260ms;
+}
+
+/* Map tokens to Tailwind utilities (bg-*, text-*, border-*, shadow-*, animate-*). */
 @theme inline {
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-elevated: var(--elevated);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-fg: var(--fg);
   --color-muted: var(--muted);
   --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-2: var(--accent-2);
+  --color-accent-3: var(--accent-3);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-text: var(--accent-text);
   --color-accent-contrast: var(--accent-contrast);
+  --color-ring: var(--ring);
+  --color-glow: var(--glow);
+  --color-glass-bg: var(--glass-bg);
+  --color-glass-border: var(--glass-border);
+  --color-highlight: var(--highlight);
+  --color-scrim: var(--scrim);
+  --color-success: var(--success);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-success-soft: var(--success-soft);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger-soft: var(--danger-soft);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-pop: var(--shadow-md);
+  --shadow-float: var(--shadow-lg);
+  --shadow-glow: var(--shadow-accent-glow);
+
+  --animate-fade-in: fade-in var(--dur-base) var(--ease-standard) both;
+  --animate-slide-up: slide-up var(--dur-slow) var(--ease-out-soft) both;
+  --animate-shimmer: shimmer 1500ms linear infinite;
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-html {
-  color-scheme: light dark;
 }
 
 body {
@@ -53,5 +193,131 @@ body {
 /* Subtle, consistent scrollbars in the app shell. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* On-brand focus affordance, robust against element box-shadows. */
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ----------------------------- Keyframes -------------------------------- */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@keyframes aurora-drift {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-2%, 1%, 0) scale(1.04); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: var(--shadow-accent-glow); }
+  50% { box-shadow: 0 0 0 1px rgba(91, 130, 246, 0.5), 0 10px 34px -4px var(--glow), 0 0 44px -2px var(--glow); }
+}
+
+/* --------------------------- Component classes -------------------------- */
+
+/* Gradient brand text (logo / hero accent word). */
+.text-gradient {
+  background: var(--gradient-logo);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Aurora hero backdrop. */
+.hero-aurora {
+  position: relative;
+  isolation: isolate;
+}
+.hero-aurora::before {
+  content: "";
+  position: absolute;
+  inset: -20% -10% auto -10%;
+  height: 70%;
+  background: var(--hero);
+  z-index: -1;
+  animation: aurora-drift 18s var(--ease-standard) infinite;
+  pointer-events: none;
+}
+
+/* Frosted glass surface (toasts, floating panels). */
+.glass {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-lg), var(--shadow-inset-glass);
+}
+
+/* Shimmering skeleton block. */
+.skeleton {
+  background: var(--grad-skeleton);
+  background-size: 200% 100%;
+  animation: shimmer 1500ms linear infinite;
+  border-radius: var(--radius-field);
+}
+
+/* Markdown / prose theming to match the token system. */
+.prose {
+  overflow-wrap: anywhere;
+  --tw-prose-body: var(--fg);
+  --tw-prose-headings: var(--fg);
+  --tw-prose-bold: var(--fg);
+  --tw-prose-links: var(--accent-text);
+  --tw-prose-bullets: var(--muted);
+  --tw-prose-counters: var(--muted);
+  --tw-prose-quotes: var(--muted);
+  --tw-prose-quote-borders: var(--border-strong);
+  --tw-prose-hr: var(--border);
+  --tw-prose-code: var(--fg);
+  --tw-prose-pre-bg: var(--surface-2);
+  --tw-prose-pre-code: var(--fg);
+  --tw-prose-th-borders: var(--border-strong);
+  --tw-prose-td-borders: var(--border);
+}
+.prose :where(code):not(:where(pre code)) {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+  font-weight: 500;
+}
+.prose :where(code):not(:where(pre code))::before,
+.prose :where(code):not(:where(pre code))::after {
+  content: none;
+}
+/* Keep wide content (tables, code, long URLs) from clipping inside the card. */
+.prose :where(table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.prose :where(pre) {
+  overflow-x: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .hero-aurora::before { animation: none; }
 }

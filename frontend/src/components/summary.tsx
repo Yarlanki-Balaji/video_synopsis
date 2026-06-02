@@ -2,21 +2,9 @@
 
 import { useState } from "react";
 
-import { Card, Icons } from "./ui";
+import { Card, IconButton, Icons, Spinner } from "./ui";
 import { Markdown } from "./markdown";
-
-const LABELS: Record<string, string> = {
-  brief: "Brief",
-  detailed: "Detailed",
-  bullets: "Bullet points",
-  chapters: "Chapters",
-  eli5: "ELI5",
-  notes: "Complete notes",
-};
-
-export function labelFor(key: string): string {
-  return LABELS[key] ?? key;
-}
+import { downloadText, labelFor, slugify, summaryToMarkdown } from "@/lib/summaries";
 
 function CopyButton({ text }: { text: string }) {
   const [done, setDone] = useState(false);
@@ -30,23 +18,50 @@ function CopyButton({ text }: { text: string }) {
     }
   }
   return (
-    <button
-      type="button"
-      onClick={copy}
-      title="Copy"
-      className="grid h-7 w-7 place-items-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-fg"
-    >
-      {done ? <Icons.check className="h-4 w-4 text-accent" /> : <Icons.copy className="h-4 w-4" />}
-    </button>
+    <IconButton size="sm" onClick={copy} aria-label="Copy to clipboard" title="Copy">
+      {done ? <Icons.check className="h-4 w-4 text-success" /> : <Icons.copy className="h-4 w-4" />}
+    </IconButton>
   );
 }
 
-export function SummaryCard({ type, content }: { type: string; content: string }) {
+export function SummaryCard({
+  type,
+  content,
+  onRegenerate,
+  regenerating = false,
+}: {
+  type: string;
+  content: string;
+  onRegenerate?: (type: string) => void;
+  regenerating?: boolean;
+}) {
   return (
-    <Card className="p-5">
-      <div className="mb-3 flex items-center justify-between">
+    <Card className="overflow-hidden p-5 animate-slide-up">
+      <div className="mb-3 flex items-center justify-between gap-2">
         <h2 className="text-xs font-semibold uppercase tracking-widest text-muted">{labelFor(type)}</h2>
-        <CopyButton text={content} />
+        <div className="flex items-center gap-0.5">
+          {onRegenerate && (
+            <IconButton
+              size="sm"
+              tone="accent"
+              onClick={() => onRegenerate(type)}
+              disabled={regenerating}
+              aria-label={`Regenerate ${labelFor(type)}`}
+              title="Regenerate this summary"
+            >
+              {regenerating ? <Spinner className="h-4 w-4" /> : <Icons.refresh className="h-4 w-4" />}
+            </IconButton>
+          )}
+          <IconButton
+            size="sm"
+            onClick={() => downloadText(`${slugify(labelFor(type))}.md`, summaryToMarkdown(type, content))}
+            aria-label={`Download ${labelFor(type)} as markdown`}
+            title="Download .md"
+          >
+            <Icons.download className="h-4 w-4" />
+          </IconButton>
+          <CopyButton text={content} />
+        </div>
       </div>
       <Markdown>{content}</Markdown>
     </Card>

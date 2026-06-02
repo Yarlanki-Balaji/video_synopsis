@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import datetime, timedelta
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -18,8 +20,10 @@ from ..config import settings
 from ..db import get_session
 from ..deps import get_current_user
 from ..llm import LIGHT_TYPES
-from ..models import Job, JobStatus, Summary, User
+from ..models import DailyUsage, Job, JobStatus, Summary, User
 from ..quota import check_and_reserve
+from ..security import utcnow
+from ..transcript import TranscriptError, extract_video_id, fetch_title, fetch_transcript
 
 router = APIRouter(prefix="/api", tags=["summarize"])
 
@@ -33,11 +37,25 @@ class SummarizeIn(BaseModel):
     complete_notes: bool = False
     video_id: str | None = None
     source: str = "paste"
+    # Regenerate: bust the content-bound cache for the requested types and run a
+    # fresh (quota-counted) job instead of serving the previous result.
+    force: bool = False
 
 
 class SummarizeOut(BaseModel):
     job_id: str
     status: str
+
+
+class TranscriptIn(BaseModel):
+    url: str
+
+
+class TranscriptOut(BaseModel):
+    video_id: str
+    title: str | None = None
+    transcript: str
+    truncated: bool
 
 
 def _sha256(text: str) -> str:
@@ -69,22 +87,39 @@ async def summarize(
     session: AsyncSession = Depends(get_session),
 ):
     types = sorted({t for t in body.summary_types if t in VALID_TYPES})
-    if not types:
+    if not types and not body.complete_notes:
         raise HTTPException(422, "Pick at least one summary type.")
     transcript = _validate_transcript(body.transcript_text)
     tsha = _sha256(transcript)
     video_id = (body.video_id or "").strip()[:16] or None
+    wanted = types + (["notes"] if body.complete_notes else [])
 
+    # Regenerate (force) is always a brand-new job: salt the idempotency key so
+    # it doesn't short-circuit to a prior job. The worker (not this request)
+    # regenerates and OVERWRITES the cached rows on success, so we never delete
+    # another user's completed result here.
     # Idempotency key (Part C): same user + content + options -> same job.
-    idem = _sha256(f"{user.id}|{tsha}|{','.join(types)}|{int(body.complete_notes)}")
+    salt = f"|force|{uuid4().hex}" if body.force else ""
+    idem = _sha256(f"{user.id}|{tsha}|{','.join(types)}|{int(body.complete_notes)}{salt}")
     existing = (
         await session.execute(select(Job).where(Job.idempotency_key == idem))
     ).scalar_one_or_none()
     if existing is not None:
+        # A prior attempt that errored out should RE-RUN on retry (e.g. after a
+        # fix or a transient failure) — otherwise the idempotent lookup keeps
+        # handing back the stale failure forever. Re-queue it (reset attempts so
+        # the worker will claim it again) instead of returning the error.
+        if existing.status == JobStatus.error.value:
+            existing.status = JobStatus.queued.value
+            existing.phase = "queued"
+            existing.error = None
+            existing.attempts = 0
+            existing.lease_owner = None
+            existing.lease_expires_at = None
+            await session.commit()
         return SummarizeOut(job_id=existing.id, status=existing.status)
 
     # Content-bound cache (G4): is every requested type already generated?
-    wanted = types + (["notes"] if body.complete_notes else [])
     cached = set(
         (
             await session.execute(
@@ -96,7 +131,8 @@ async def summarize(
             )
         ).scalars().all()
     )
-    all_cached = all(t in cached for t in wanted)
+    # A forced regenerate must always run (and re-bill quota), even if cached.
+    all_cached = (not body.force) and all(t in cached for t in wanted)
 
     # Quota + breaker only when real work is needed (cache hits are free).
     if not all_cached:
@@ -115,6 +151,7 @@ async def summarize(
         lang="en",
         summary_types=",".join(types),
         complete_notes=body.complete_notes,
+        force=body.force,
         status=JobStatus.done.value if all_cached else JobStatus.queued.value,
         phase="cached" if all_cached else "queued",
     )
@@ -131,6 +168,49 @@ async def summarize(
             return SummarizeOut(job_id=existing.id, status=existing.status)
         raise
     return SummarizeOut(job_id=job.id, status=job.status)
+
+
+@router.post("/transcript", response_model=TranscriptOut)
+async def get_transcript(body: TranscriptIn, user: User = Depends(get_current_user)):
+    """Fetch a YouTube transcript by URL (M3). The client then sends the returned
+    text to POST /summarize. The fetch provider is chosen by settings."""
+    video_id = extract_video_id(body.url)
+    if not video_id:
+        raise HTTPException(422, "Enter a valid YouTube video URL.")
+    try:
+        text = await fetch_transcript(video_id)
+    except TranscriptError as exc:
+        raise HTTPException(exc.status, exc.detail)
+    truncated = len(text) > settings.transcript_max_chars
+    if truncated:
+        text = text[: settings.transcript_max_chars].rstrip()
+    title = await fetch_title(video_id)
+    return TranscriptOut(video_id=video_id, title=title, transcript=text, truncated=truncated)
+
+
+@router.get("/usage")
+async def usage(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Today's per-user job usage against the daily cap (UTC day)."""
+    day = utcnow().strftime("%Y-%m-%d")
+    used = (
+        await session.execute(
+            select(DailyUsage.jobs_count).where(
+                DailyUsage.scope == f"user:{user.id}", DailyUsage.day == day
+            )
+        )
+    ).scalar_one_or_none() or 0
+    limit = settings.per_user_daily_jobs
+    tomorrow = (utcnow() + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return {
+        "jobs_used": used,
+        "jobs_limit": limit,
+        "jobs_remaining": max(0, limit - used),
+        "day": day,
+        "resets_at": tomorrow.isoformat() + "Z",
+    }
 
 
 @router.get("/jobs")
@@ -188,3 +268,20 @@ async def get_job(
         ).scalars().all()
         out["summaries"] = {r.type: r.content for r in rows}
     return out
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete one of the caller's jobs. Shared, content-bound Summary rows are
+    left intact (they're a cross-user cache keyed by transcript hash, not owned
+    by this job), so deleting a job only removes it from the user's history."""
+    job = await session.get(Job, job_id)
+    if job is None or job.user_id != user.id:  # ownership check (no IDOR)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
+    await session.delete(job)
+    await session.commit()
+    return {"ok": True}

@@ -33,8 +33,13 @@ Following the milestone plan (`video_synopsis_final_plan.md` §8):
 - [x] **M2 — Job engine + Groq:** Postgres job ledger + in-process worker/reaper
   (lease + fencing + heartbeat), Groq `gpt-oss-120b` client with dev stub, content-bound
   cache, idempotency, Postgres quotas + circuit breaker; `POST /api/summarize` + `GET /api/jobs/{id}`
-- [ ] **M3 — Transcript capture**
-- [ ] **M4 — Frontend pages**
+- [x] **M3 — Transcript capture:** paste a YouTube URL → backend fetches the transcript
+  (`POST /api/transcript`) → summarize. Direct caption fetch (`youtube-transcript-api`) works
+  on a residential/local IP; on a cloud IP set `TRANSCRIPT_PROVIDER=managed` and wire a managed
+  transcript API (plan §3 "Wall B"). Paste-transcript remains the universal fallback.
+- [x] **M4 — Frontend pages:** Summarize (URL or paste), History (search/filter/select/export/delete),
+  job detail, Settings (usage + change password), landing, login/signup, forgot/reset password;
+  responsive app shell, dark/light, toasts.
 - [ ] **M5 — Hardening + launch**
 
 ## Run locally

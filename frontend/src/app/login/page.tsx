@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import { api, errorDetail } from "@/lib/api";
-import { AuthShell, Field, PasswordField, SubmitButton } from "@/components/auth";
+import { AuthShell, AuthError, Field, PasswordField, SubmitButton } from "@/components/auth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -34,20 +34,26 @@ export default function LoginPage() {
 
   return (
     <AuthShell
-      title="Log in"
+      title="Welcome back"
+      subtitle="Log in to summarize videos and view your history."
       footer={
         <>
           Need an account?{" "}
-          <Link href="/signup" className="font-medium underline">
+          <Link href="/signup" className="font-medium text-accent-text hover:underline">
             Sign up
           </Link>
         </>
       }
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-4">
-        <Field label="Email" type="email" value={email} onChange={setEmail} autoComplete="email" />
-        <PasswordField label="Password" value={password} onChange={setPassword} autoComplete="current-password" />
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        <Field label="Email" type="email" value={email} onChange={setEmail} autoComplete="email" placeholder="you@example.com" />
+        <div className="flex flex-col gap-1.5">
+          <PasswordField label="Password" value={password} onChange={setPassword} autoComplete="current-password" />
+          <Link href="/forgot-password" className="self-end text-xs text-muted hover:text-accent-text">
+            Forgot password?
+          </Link>
+        </div>
+        {error && <AuthError>{error}</AuthError>}
         <SubmitButton busy={busy}>Log in</SubmitButton>
       </form>
     </AuthShell>

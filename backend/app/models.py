@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -113,6 +114,10 @@ class Job(Base):
     lang: Mapped[str] = mapped_column(String(8), default="en")
     summary_types: Mapped[str] = mapped_column(String(255))  # comma-joined sorted
     complete_notes: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Regenerate: when set, the worker re-generates the requested types even if
+    # cached and OVERWRITES the shared Summary rows in place — so a regenerate
+    # never deletes another user's completed result (no empty window, no loss).
+    force: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     status: Mapped[str] = mapped_column(String(16), default=JobStatus.queued.value, index=True)
     phase: Mapped[str | None] = mapped_column(String(64), nullable=True)

@@ -73,6 +73,11 @@ class ResetIn(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
+class ChangePasswordIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class UserOut(BaseModel):
     id: str
     email: str
@@ -236,7 +241,7 @@ async def refresh(request: Request, response: Response, session: AsyncSession = 
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(request: Request, response: Response, session: AsyncSession = Depends(get_session)):
+async def logout(request: Request, session: AsyncSession = Depends(get_session)):
     # Plain logout revokes the refresh family + clears cookies. The current
     # access token stays valid until exp (<=30 min); use /logout-all to kill it
     # immediately (bumps token_version).
@@ -251,24 +256,58 @@ async def logout(request: Request, response: Response, session: AsyncSession = D
                 .values(revoked_at=utcnow())
             )
             await session.commit()
-    _clear_auth_cookies(response)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    # Clear cookies on the response we actually RETURN. (Mutating an injected
+    # Response and then returning a different one drops the Set-Cookie headers.)
+    resp = Response(status_code=status.HTTP_204_NO_CONTENT)
+    _clear_auth_cookies(resp)
+    return resp
 
 
 @router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
-async def logout_all(response: Response, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+async def logout_all(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     user.token_version += 1  # invalidates every live access token (B4)
     await session.execute(
         update(Session).where(Session.user_id == user.id, Session.revoked_at.is_(None))
         .values(revoked_at=utcnow())
     )
     await session.commit()
-    _clear_auth_cookies(response)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    resp = Response(status_code=status.HTTP_204_NO_CONTENT)
+    _clear_auth_cookies(resp)
+    return resp
 
 
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user)):
+    return UserOut(id=user.id, email=user.email, status=user.status)
+
+
+@router.post("/change-password", response_model=UserOut)
+async def change_password(
+    body: ChangePasswordIn,
+    response: Response,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Change password for the signed-in user.
+
+    Verifies the current password, then rotates everything: bump token_version
+    (kills every live access token), revoke all refresh sessions (logs out other
+    devices), and issue a fresh session so THIS device stays signed in.
+    """
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is incorrect")
+    if body.new_password == body.current_password:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "New password must be different")
+
+    user.password_hash = hash_password(body.new_password)
+    user.token_version += 1  # invalidate every existing access token
+    await session.execute(
+        update(Session).where(Session.user_id == user.id, Session.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+    )
+    # Re-issue a session for the current device with the new token_version.
+    await _issue_session(session, user, response)
+    await session.commit()
     return UserOut(id=user.id, email=user.email, status=user.status)
 
 
@@ -308,7 +347,7 @@ async def request_password_reset(
 
 
 @router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
-async def reset_password(body: ResetIn, response: Response, session: AsyncSession = Depends(get_session)):
+async def reset_password(body: ResetIn, session: AsyncSession = Depends(get_session)):
     row = (
         await session.execute(select(PasswordReset).where(PasswordReset.token_hash == hash_token(body.token)))
     ).scalar_one_or_none()
@@ -335,5 +374,6 @@ async def reset_password(body: ResetIn, response: Response, session: AsyncSessio
         .values(revoked_at=utcnow())
     )
     await session.commit()
-    _clear_auth_cookies(response)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    resp = Response(status_code=status.HTTP_204_NO_CONTENT)
+    _clear_auth_cookies(resp)
+    return resp

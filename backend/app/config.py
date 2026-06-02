@@ -50,7 +50,10 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 60
     # Free-tier tokens-per-minute ceiling (input + max output must fit one request).
     groq_tpm_limit: int = 8000
-    llm_prompt_overhead_tokens: int = 1200     # reserve for system/instructions + margin
+    llm_prompt_overhead_tokens: int = 1500     # reserve for system/instructions + JSON wrapper
+    # Headroom kept BELOW the per-request ceiling so prompt boilerplate + tokenizer
+    # variance can't tip a request over and trigger Groq's 413 ("request too large").
+    groq_request_margin_tokens: int = 1200
 
     # --- Quotas + circuit breaker (Postgres-authoritative, F5) ---
     per_user_daily_jobs: int = 10
@@ -60,7 +63,15 @@ class Settings(BaseSettings):
 
     # --- Transcript validation floors (D5, basic) ---
     transcript_min_chars: int = 50
-    transcript_max_chars: int = 100_000
+    # Upper bound on accepted transcript size. The map-reduce summarizer chunks
+    # anything longer than one request, so this can be large; the daily token cap
+    # still guards Groq cost on very long videos.
+    transcript_max_chars: int = 200_000
+
+    # --- Transcript acquisition (M3) ---
+    # "local"   -> direct caption fetch (works on a residential/local IP).
+    # "managed" -> call a managed transcript API (required on cloud IPs; plan §4.1).
+    transcript_provider: str = "local"
 
     # --- Job worker (E2–E4) ---
     job_lease_seconds: int = 180           # > worst-case single Groq call (+ repair)
@@ -84,9 +95,12 @@ class Settings(BaseSettings):
     @property
     def effective_database_url(self) -> str:
         if self.database_url:
-            url = self.database_url
-            if url.startswith("postgresql://"):
-                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            url = self.database_url.strip()
+            # Aiven hands out a `postgres://` URI; SQLAlchemy's async engine needs
+            # the asyncpg driver. Normalize either scheme (idempotent).
+            for prefix in ("postgresql+asyncpg://", "postgresql://", "postgres://"):
+                if url.startswith(prefix):
+                    return "postgresql+asyncpg://" + url[len(prefix):]
             return url
         return "sqlite+aiosqlite:///./dev.db"
 
