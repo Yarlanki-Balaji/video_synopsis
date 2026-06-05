@@ -89,6 +89,23 @@ class PasswordReset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class EmailVerification(Base):
+    """A single-use, short-lived 6-digit OTP emailed to verify an account at
+    signup. Hashed at rest; capped attempts to resist brute force."""
+
+    __tablename__ = "email_verifications"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 # --- M2: job engine + summaries + usage ------------------------------------
 
 class JobStatus(str, enum.Enum):

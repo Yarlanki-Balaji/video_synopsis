@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     access_token_ttl_minutes: int = 30
     refresh_token_ttl_days: int = 7
     password_reset_ttl_minutes: int = 60
+    # Email-verification OTP (signup).
+    email_otp_ttl_minutes: int = 10
+    email_otp_max_attempts: int = 5
 
     # Cookie behaviour. "lax" is fine when web+api share a registrable domain
     # (incl. localhost). Cross-site prod deploys need "none" + HTTPS.
@@ -37,6 +40,11 @@ class Settings(BaseSettings):
     # --- Email ---
     resend_api_key: str | None = None
     email_from: str = "Video Synopsis <onboarding@resend.dev>"
+    # Brevo (Sendinblue) — sends to ANY recipient after verifying a single sender
+    # email (no domain needed). Set both to enable; takes priority over Resend.
+    brevo_api_key: str | None = None
+    brevo_sender_email: str | None = None
+    brevo_sender_name: str = "Video Synopsis"
     public_app_url: str = "http://localhost:3000"   # used to build password-reset links
 
     # --- Groq / LLM (F1–F4) ---
@@ -55,6 +63,29 @@ class Settings(BaseSettings):
     # variance can't tip a request over and trigger Groq's 413 ("request too large").
     groq_request_margin_tokens: int = 1200
 
+    # --- Gemini (alternative summarizer; 1M-token context handles big transcripts
+    # in one request, no map-reduce) ---
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_max_output_tokens: int = 16384
+    gemini_max_input_tokens: int = 900_000     # safety cap well under the 1M context
+    # Summarizer backend: "auto" (Gemini if its key is set, else Groq), "gemini", "groq".
+    llm_provider: str = "auto"
+
+    @property
+    def effective_llm_provider(self) -> str:
+        choice = (self.llm_provider or "auto").lower()
+        if choice == "gemini":
+            return "gemini" if self.gemini_api_key else "stub"
+        if choice == "groq":
+            return "groq" if self.groq_api_key else "stub"
+        # auto
+        if self.gemini_api_key:
+            return "gemini"
+        if self.groq_api_key:
+            return "groq"
+        return "stub"
+
     # --- Quotas + circuit breaker (Postgres-authoritative, F5) ---
     per_user_daily_jobs: int = 10
     global_daily_jobs: int = 50                # proxy for ~25–80 videos/day
@@ -72,6 +103,11 @@ class Settings(BaseSettings):
     # "local"   -> direct caption fetch (works on a residential/local IP).
     # "managed" -> call a managed transcript API (required on cloud IPs; plan §4.1).
     transcript_provider: str = "local"
+    # YouTube Data API v3 key — used ONLY for video TITLE + DURATION metadata.
+    # (Data API v3 cannot download caption TEXT for videos you don't own — that
+    # needs OAuth as the video owner — so the transcript itself still comes from
+    # the library / managed provider above; this just enriches the metadata.)
+    youtube_api_key: str | None = None
 
     # --- Job worker (E2–E4) ---
     job_lease_seconds: int = 180           # > worst-case single Groq call (+ repair)

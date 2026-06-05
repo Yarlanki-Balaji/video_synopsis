@@ -23,7 +23,7 @@ from ..llm import LIGHT_TYPES
 from ..models import DailyUsage, Job, JobStatus, Summary, User
 from ..quota import check_and_reserve
 from ..security import utcnow
-from ..transcript import TranscriptError, extract_video_id, fetch_title, fetch_transcript
+from ..transcript import TranscriptError, extract_video_id, fetch_metadata, fetch_transcript
 
 router = APIRouter(prefix="/api", tags=["summarize"])
 
@@ -54,6 +54,7 @@ class TranscriptIn(BaseModel):
 class TranscriptOut(BaseModel):
     video_id: str
     title: str | None = None
+    duration: int | None = None  # seconds (from YouTube Data API v3 if configured)
     transcript: str
     truncated: bool
 
@@ -184,8 +185,8 @@ async def get_transcript(body: TranscriptIn, user: User = Depends(get_current_us
     truncated = len(text) > settings.transcript_max_chars
     if truncated:
         text = text[: settings.transcript_max_chars].rstrip()
-    title = await fetch_title(video_id)
-    return TranscriptOut(video_id=video_id, title=title, transcript=text, truncated=truncated)
+    title, duration = await fetch_metadata(video_id)
+    return TranscriptOut(video_id=video_id, title=title, duration=duration, transcript=text, truncated=truncated)
 
 
 @router.get("/usage")

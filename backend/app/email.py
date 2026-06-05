@@ -15,7 +15,9 @@ logger = logging.getLogger("app.email")
 
 
 async def send_email(to: str, subject: str, body: str) -> None:
-    if settings.resend_api_key:
+    if settings.brevo_api_key and settings.brevo_sender_email:
+        await _send_via_brevo(to, subject, body)
+    elif settings.resend_api_key:
         await _send_via_resend(to, subject, body)
     else:
         # Dev-only path (production requires RESEND_API_KEY). print() so the link
@@ -27,6 +29,25 @@ async def send_email(to: str, subject: str, body: str) -> None:
         )
         print(message, flush=True)
         logger.info(message)
+
+
+async def _send_via_brevo(to: str, subject: str, body: str) -> None:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={
+                "api-key": settings.brevo_api_key,
+                "accept": "application/json",
+                "content-type": "application/json",
+            },
+            json={
+                "sender": {"name": settings.brevo_sender_name, "email": settings.brevo_sender_email},
+                "to": [{"email": to}],
+                "subject": subject,
+                "textContent": body,
+            },
+        )
+        resp.raise_for_status()
 
 
 async def _send_via_resend(to: str, subject: str, body: str) -> None:

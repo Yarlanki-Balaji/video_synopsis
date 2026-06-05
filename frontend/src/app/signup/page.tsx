@@ -29,7 +29,8 @@ export default function SignupPage() {
         body: JSON.stringify({ email, password }),
       });
       if (!res.ok) throw new Error(await errorDetail(res, "Signup failed"));
-      router.push("/summarize");
+      // Account starts unverified — go enter the emailed code (which logs in).
+      router.push(`/verify-email?email=${encodeURIComponent(email)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {

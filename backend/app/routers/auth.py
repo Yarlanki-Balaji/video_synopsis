@@ -33,10 +33,11 @@ from ..config import settings
 from ..db import get_session
 from ..deps import get_current_user
 from ..email import send_email
-from ..models import ClientType, PasswordReset, Session, User, UserStatus
+from ..models import ClientType, EmailVerification, PasswordReset, Session, User, UserStatus
 from ..security import (
     create_access_token,
     dummy_verify,
+    generate_otp,
     generate_token,
     hash_password,
     hash_token,
@@ -71,6 +72,11 @@ class EmailIn(BaseModel):
 class ResetIn(BaseModel):
     token: str
     password: str = Field(min_length=8, max_length=128)
+
+
+class VerifyEmailIn(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=8)
 
 
 class ChangePasswordIn(BaseModel):
@@ -127,10 +133,35 @@ async def _issue_session(
     _set_auth_cookies(response, access, raw_refresh)
 
 
+async def _send_email_otp(session: AsyncSession, user: User, background: BackgroundTasks) -> None:
+    """Invalidate any outstanding codes, mint a fresh 6-digit OTP (hashed at
+    rest), and queue the verification email (printed to the log in dev)."""
+    await session.execute(
+        update(EmailVerification)
+        .where(EmailVerification.user_id == user.id, EmailVerification.used_at.is_(None))
+        .values(used_at=utcnow())
+    )
+    code = generate_otp()
+    session.add(
+        EmailVerification(
+            user_id=user.id,
+            code_hash=hash_token(code),
+            expires_at=utcnow() + timedelta(minutes=settings.email_otp_ttl_minutes),
+        )
+    )
+    background.add_task(
+        send_email,
+        user.email,
+        "Your verification code",
+        f"Your Video Synopsis verification code is: {code}\n\n"
+        f"It expires in {settings.email_otp_ttl_minutes} minutes.",
+    )
+
+
 # --- Endpoints ---------------------------------------------------------------
 
 @router.post("/signup", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-async def signup(body: SignupIn, response: Response, session: AsyncSession = Depends(get_session)):
+async def signup(body: SignupIn, background: BackgroundTasks, session: AsyncSession = Depends(get_session)):
     email = normalize_email(body.email)
 
     existing = (
@@ -139,11 +170,13 @@ async def signup(body: SignupIn, response: Response, session: AsyncSession = Dep
     if existing is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Account already exists")
 
+    # Account starts UNVERIFIED (no auto-login). The client must confirm the
+    # emailed OTP at /auth/verify-email, which then logs the user in.
     user = User(
         email=email,
         password_hash=hash_password(body.password),
         status=UserStatus.active.value,
-        email_verified_at=utcnow(),
+        email_verified_at=None,
     )
     session.add(user)
     try:
@@ -153,7 +186,7 @@ async def signup(body: SignupIn, response: Response, session: AsyncSession = Dep
         await session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Account already exists")
 
-    await _issue_session(session, user, response)
+    await _send_email_otp(session, user, background)
     await session.commit()
     return UserOut(id=user.id, email=user.email, status=user.status)
 
@@ -174,6 +207,9 @@ async def login(body: LoginIn, response: Response, session: AsyncSession = Depen
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
     if user.status != UserStatus.active.value:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Account is not active")
+    if user.email_verified_at is None:
+        # Distinct 403 so the client can route the user to the verify-email page.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Please verify your email to continue.")
 
     await _issue_session(session, user, response)
     await session.commit()
@@ -279,6 +315,55 @@ async def logout_all(user: User = Depends(get_current_user), session: AsyncSessi
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user)):
     return UserOut(id=user.id, email=user.email, status=user.status)
+
+
+@router.post("/verify-email", response_model=UserOut)
+async def verify_email(body: VerifyEmailIn, response: Response, session: AsyncSession = Depends(get_session)):
+    """Confirm the signup OTP. On success the email is marked verified and the
+    user is signed in (cookies set)."""
+    email = normalize_email(body.email)
+    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code.")
+    if user.email_verified_at is not None:
+        # Already verified — sign in (idempotent).
+        await _issue_session(session, user, response)
+        await session.commit()
+        return UserOut(id=user.id, email=user.email, status=user.status)
+
+    row = (
+        await session.execute(
+            select(EmailVerification)
+            .where(EmailVerification.user_id == user.id, EmailVerification.used_at.is_(None))
+            .order_by(EmailVerification.created_at.desc())
+        )
+    ).scalars().first()
+    if row is None or row.expires_at < utcnow() or row.attempts >= settings.email_otp_max_attempts:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code. Request a new one.")
+
+    if hash_token(body.code.strip()) != row.code_hash:
+        row.attempts += 1
+        await session.commit()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Incorrect code.")
+
+    row.used_at = utcnow()
+    user.email_verified_at = utcnow()
+    await _issue_session(session, user, response)  # verified -> sign in
+    await session.commit()
+    return UserOut(id=user.id, email=user.email, status=user.status)
+
+
+@router.post("/resend-verification", status_code=status.HTTP_202_ACCEPTED)
+async def resend_verification(
+    body: EmailIn, background: BackgroundTasks, session: AsyncSession = Depends(get_session)
+):
+    """Re-send the signup OTP. Always 202 (no account enumeration)."""
+    email = normalize_email(body.email)
+    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if user is not None and user.email_verified_at is None:
+        await _send_email_otp(session, user, background)
+        await session.commit()
+    return {"status": "accepted"}
 
 
 @router.post("/change-password", response_model=UserOut)

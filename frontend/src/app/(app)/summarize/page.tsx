@@ -30,7 +30,16 @@ type JobView = {
   summary_types: string[];
 };
 
-type TranscriptOut = { video_id: string; title: string | null; transcript: string; truncated: boolean };
+type TranscriptOut = { video_id: string; title: string | null; duration: number | null; transcript: string; truncated: boolean };
+
+function formatDuration(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
+    : `${m}:${String(sec).padStart(2, "0")}`;
+}
 
 const PHASE_LABEL: Record<string, string> = {
   queued: "Queued",
@@ -53,6 +62,7 @@ export default function SummarizePage() {
   const [transcript, setTranscript] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [videoTitle, setVideoTitle] = useState<string | null>(null);
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set(SUMMARY_TYPES.map((t) => t.key)));
   const [notes, setNotes] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -111,6 +121,7 @@ export default function SummarizePage() {
     setError(null);
     setJob(null);
     setVideoTitle(null);
+    setVideoDuration(null);
     if (!hasType) return setError("Pick at least one summary type.");
 
     const types = SUMMARY_TYPES.map((t) => t.key).filter((k) => selected.has(k));
@@ -132,6 +143,7 @@ export default function SummarizePage() {
         videoId = data.video_id;
         source = "api";
         setVideoTitle(data.title);
+        setVideoDuration(data.duration);
         if (data.truncated) {
           toast.toast({ title: "Long video", description: "The transcript was truncated to fit the limit.", variant: "warn" });
         }
@@ -347,7 +359,12 @@ export default function SummarizePage() {
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
-              {videoTitle && <p className="truncate text-sm font-medium text-fg" title={videoTitle}>{videoTitle}</p>}
+              {videoTitle && (
+                <p className="truncate text-sm font-medium text-fg" title={videoTitle}>
+                  {videoTitle}
+                  {videoDuration ? <span className="font-normal text-muted"> · {formatDuration(videoDuration)}</span> : null}
+                </p>
+              )}
               <h2 className="text-sm text-muted">
                 {keys.length} {keys.length === 1 ? "summary" : "summaries"}
               </h2>

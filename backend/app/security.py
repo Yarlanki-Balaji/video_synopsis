@@ -58,6 +58,11 @@ def generate_token(nbytes: int = 32) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
+def generate_otp() -> str:
+    """A 6-digit numeric one-time code (zero-padded)."""
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 

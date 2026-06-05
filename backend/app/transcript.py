@@ -75,6 +75,42 @@ async def fetch_title(video_id: str) -> str | None:
     return None
 
 
+_ISO_DUR = re.compile(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
+
+
+def _parse_iso_duration(s: str | None) -> int | None:
+    """ISO-8601 duration (e.g. 'PT15M33S') -> seconds."""
+    if not s:
+        return None
+    m = _ISO_DUR.fullmatch(s)
+    if not m:
+        return None
+    h, mi, se = (int(x) if x else 0 for x in m.groups())
+    return h * 3600 + mi * 60 + se
+
+
+async def fetch_metadata(video_id: str) -> tuple[str | None, int | None]:
+    """Return (title, duration_seconds). Uses YouTube Data API v3 when a key is
+    set (title + duration); otherwise falls back to oEmbed (title only)."""
+    if settings.youtube_api_key:
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                r = await client.get(
+                    "https://www.googleapis.com/youtube/v3/videos",
+                    params={"part": "snippet,contentDetails", "id": video_id, "key": settings.youtube_api_key},
+                )
+            if r.status_code == 200:
+                items = r.json().get("items") or []
+                if items:
+                    snip = items[0].get("snippet") or {}
+                    cd = items[0].get("contentDetails") or {}
+                    title = (snip.get("title") or "").strip() or None
+                    return title, _parse_iso_duration(cd.get("duration"))
+        except Exception:
+            pass
+    return await fetch_title(video_id), None
+
+
 def _fetch_via_library(video_id: str) -> str:
     """Direct caption fetch (works on a residential/local IP). Runs in a thread."""
     from youtube_transcript_api import (

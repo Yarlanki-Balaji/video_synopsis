@@ -12,3 +12,4 @@ email-validator==2.2.0
 httpx==0.28.1
 youtube-transcript-api==1.2.4
 tiktoken==0.13.0
+google-genai==2.8.0

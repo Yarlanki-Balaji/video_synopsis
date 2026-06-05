@@ -23,7 +23,15 @@ export default function LoginPage() {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
-      if (!res.ok) throw new Error(await errorDetail(res, "Login failed"));
+      if (!res.ok) {
+        const detail = await errorDetail(res, "Login failed");
+        // Unverified account -> send them to enter the emailed code.
+        if (res.status === 403 && /verify/i.test(detail)) {
+          router.push(`/verify-email?email=${encodeURIComponent(email)}`);
+          return;
+        }
+        throw new Error(detail);
+      }
       router.push("/summarize");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
