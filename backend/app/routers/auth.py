@@ -25,7 +25,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,7 +33,7 @@ from ..config import settings
 from ..db import get_session
 from ..deps import get_current_user
 from ..email import send_email
-from ..models import ClientType, EmailVerification, PasswordReset, Session, User, UserStatus
+from ..models import ClientType, EmailVerification, PasswordResetCode, Session, User, UserStatus
 from ..security import (
     create_access_token,
     dummy_verify,
@@ -70,7 +70,8 @@ class EmailIn(BaseModel):
 
 
 class ResetIn(BaseModel):
-    token: str
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=8)
     password: str = Field(min_length=8, max_length=128)
 
 
@@ -169,6 +170,14 @@ async def signup(body: SignupIn, background: BackgroundTasks, session: AsyncSess
     ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Account already exists")
+
+    # Beta cap: stop new signups once we hit the user limit.
+    user_count = (await session.execute(select(func.count()).select_from(User))).scalar_one()
+    if user_count >= settings.max_users:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "We've reached our beta user limit. Please check back soon.",
+        )
 
     # Account starts UNVERIFIED (no auto-login). The client must confirm the
     # emailed OTP at /auth/verify-email, which then logs the user in.
@@ -400,32 +409,35 @@ async def change_password(
 async def request_password_reset(
     body: EmailIn, background: BackgroundTasks, session: AsyncSession = Depends(get_session)
 ):
+    """Email a 6-digit reset code. Always 202 (no account enumeration)."""
     email = normalize_email(body.email)
     user = (
         await session.execute(select(User).where(User.email == email))
     ).scalar_one_or_none()
 
-    # Always return the same 202. The email send is queued to a background task
-    # so response latency doesn't reveal whether the account exists.
     if user is not None and user.status == UserStatus.active.value:
-        # Invalidate any prior outstanding reset tokens for this user.
+        # Invalidate any outstanding codes, then issue a fresh one.
         await session.execute(
-            update(PasswordReset).where(PasswordReset.user_id == user.id, PasswordReset.used_at.is_(None))
+            update(PasswordResetCode)
+            .where(PasswordResetCode.user_id == user.id, PasswordResetCode.used_at.is_(None))
             .values(used_at=utcnow())
         )
-        raw = generate_token()
+        code = generate_otp()
         session.add(
-            PasswordReset(
+            PasswordResetCode(
                 user_id=user.id,
-                token_hash=hash_token(raw),
+                code_hash=hash_token(code),
                 expires_at=utcnow() + timedelta(minutes=settings.password_reset_ttl_minutes),
             )
         )
         await session.commit()
-        link = f"{settings.public_app_url}/reset-password?token={raw}"
         background.add_task(
-            send_email, email, "Reset your password",
-            f"Reset link (valid {settings.password_reset_ttl_minutes} min):\n{link}",
+            send_email,
+            email,
+            "Your password reset code",
+            f"Your Video Synopsis password reset code is: {code}\n\n"
+            f"It expires in {settings.password_reset_ttl_minutes} minutes. "
+            "If you didn't request this, you can ignore this email.",
         )
 
     return {"status": "accepted"}
@@ -433,27 +445,30 @@ async def request_password_reset(
 
 @router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
 async def reset_password(body: ResetIn, session: AsyncSession = Depends(get_session)):
-    row = (
-        await session.execute(select(PasswordReset).where(PasswordReset.token_hash == hash_token(body.token)))
-    ).scalar_one_or_none()
-    if row is None or row.used_at is not None or row.expires_at < utcnow():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired reset token")
-
-    # Atomic single-use claim.
-    claimed = await session.execute(
-        update(PasswordReset).where(PasswordReset.id == row.id, PasswordReset.used_at.is_(None))
-        .values(used_at=utcnow())
-    )
-    if claimed.rowcount != 1:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired reset token")
-
-    user = await session.get(User, row.user_id)
+    """Verify the emailed reset code and set a new password (kills all sessions)."""
+    email = normalize_email(body.email)
+    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
     if user is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired reset token")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code.")
 
+    row = (
+        await session.execute(
+            select(PasswordResetCode)
+            .where(PasswordResetCode.user_id == user.id, PasswordResetCode.used_at.is_(None))
+            .order_by(PasswordResetCode.created_at.desc())
+        )
+    ).scalars().first()
+    if row is None or row.expires_at < utcnow() or row.attempts >= settings.email_otp_max_attempts:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code. Request a new one.")
+
+    if hash_token(body.code.strip()) != row.code_hash:
+        row.attempts += 1
+        await session.commit()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Incorrect code.")
+
+    row.used_at = utcnow()
     user.password_hash = hash_password(body.password)
     user.token_version += 1  # kill existing access tokens
-    # Force re-login everywhere.
     await session.execute(
         update(Session).where(Session.user_id == user.id, Session.revoked_at.is_(None))
         .values(revoked_at=utcnow())

@@ -86,7 +86,12 @@ class Settings(BaseSettings):
             return "groq"
         return "stub"
 
+    # --- Beta signup cap ---
+    # Max total registered users (beta). Signup is rejected once reached.
+    max_users: int = 50
+
     # --- Quotas + circuit breaker (Postgres-authoritative, F5) ---
+    # per_user_daily_jobs is the free-plan per-account daily limit.
     per_user_daily_jobs: int = 10
     global_daily_jobs: int = 50                # proxy for ~25–80 videos/day
     global_daily_tokens: int = 200_000         # Groq free TPD
