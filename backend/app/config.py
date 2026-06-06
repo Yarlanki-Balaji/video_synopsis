@@ -114,6 +114,15 @@ class Settings(BaseSettings):
     # the library / managed provider above; this just enriches the metadata.)
     youtube_api_key: str | None = None
 
+    # --- Audio fallback: no captions -> download audio -> speech-to-text ---
+    # Always outputs ENGLISH. Whisper first (Groq), Gemini for larger/long audio.
+    # LOCAL ONLY in practice: yt-dlp is IP-blocked from cloud (same as captions).
+    # ffmpeg is provided by the static-ffmpeg package (no system install needed).
+    audio_fallback_enabled: bool = True
+    groq_whisper_model: str = "whisper-large-v3"     # /audio/translations -> English
+    groq_audio_max_bytes: int = 25 * 1024 * 1024     # Groq free-tier per-file cap
+    audio_transcribe_timeout: int = 300              # seconds for the ASR request
+
     # --- Job worker (E2–E4) ---
     job_lease_seconds: int = 180           # > worst-case single Groq call (+ repair)
     job_max_attempts: int = 3

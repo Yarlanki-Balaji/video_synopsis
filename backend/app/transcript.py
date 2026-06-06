@@ -174,8 +174,15 @@ async def _fetch_managed(video_id: str) -> str:
 
 
 async def fetch_transcript(video_id: str) -> str:
-    """Return the plain-text transcript for a video id, using the configured provider."""
+    """Return the plain-text transcript for a video id, using the configured provider.
+    If no captions exist, fall back to downloading the audio and transcribing it."""
     if settings.transcript_provider == "managed":
         return await _fetch_managed(video_id)
-    # Default: direct library fetch (good for local/residential IPs).
-    return await run_in_threadpool(_fetch_via_library, video_id)
+    # Default: direct caption fetch (good for local/residential IPs).
+    try:
+        return await run_in_threadpool(_fetch_via_library, video_id)
+    except NoTranscript:
+        # No captions available -> download the audio and run speech-to-text.
+        from .audio import transcribe_audio  # lazy import avoids a circular import
+
+        return await transcribe_audio(video_id)
