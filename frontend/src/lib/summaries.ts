@@ -10,6 +10,7 @@ export const SUMMARY_TYPES: SummaryTypeDef[] = [
   { key: "bullets", label: "Bullet points", desc: "Key takeaways" },
   { key: "chapters", label: "Chapters", desc: "Timestamped sections" },
   { key: "eli5", label: "ELI5", desc: "Explained simply" },
+  { key: "mindmap", label: "Mind map", desc: "Learning roadmap" },
 ];
 
 export const NOTES_DEF: SummaryTypeDef = { key: "notes", label: "Complete notes", desc: "Full study notes" };

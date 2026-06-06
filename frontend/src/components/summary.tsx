@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Card, IconButton, Icons, Spinner } from "./ui";
 import { Markdown } from "./markdown";
+import { MindMap } from "./mindmap";
 import { downloadText, labelFor, slugify, summaryToMarkdown } from "@/lib/summaries";
 
 function CopyButton({ text }: { text: string }) {
@@ -63,7 +64,7 @@ export function SummaryCard({
           <CopyButton text={content} />
         </div>
       </div>
-      <Markdown>{content}</Markdown>
+      {type === "mindmap" ? <MindMap markdown={content} /> : <Markdown>{content}</Markdown>}
     </Card>
   );
 }

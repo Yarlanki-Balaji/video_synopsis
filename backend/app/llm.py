@@ -17,7 +17,7 @@ import httpx
 
 from .config import settings
 
-LIGHT_TYPES = ["brief", "detailed", "bullets", "chapters", "eli5"]
+LIGHT_TYPES = ["brief", "detailed", "bullets", "chapters", "eli5", "mindmap"]
 
 TYPE_INSTRUCTIONS = {
     "brief": "A 2-3 sentence summary.",
@@ -26,6 +26,15 @@ TYPE_INSTRUCTIONS = {
     "chapters": "Chronological sections with short markdown '##' headings.",
     "eli5": "Explain it simply, as if to a curious 10-year-old.",
     "notes": "Comprehensive study notes: headings, key points, and takeaways.",
+    "mindmap": (
+        "A mind map, as a markdown outline, that guides how to LEARN and approach "
+        "the topic — NOT just a content summary. Use exactly ONE '# ' line as the "
+        "root naming the topic, then '## ' branches, then nested '- ' bullets for "
+        "sub-points. Organize it as a learning roadmap: where to start, the "
+        "recommended order/flow to follow, the core concepts grouped logically and "
+        "how they connect, and what to explore deeper afterwards. Keep every node "
+        "short (a few words). Output only the markdown outline."
+    ),
 }
 
 _URL_RE = re.compile(r"https?://[^\s)\]>\"']+")
@@ -442,6 +451,7 @@ def _stub(transcript: str, types: list[str]) -> LLMResult:
         "chapters": "[stub] Chapters (dev mode):\n## 0:00 Intro\n## 1:00 Main\n## 2:00 Wrap-up",
         "eli5": f"[stub] In simple terms (dev mode): it's about — {excerpt[:90]}…",
         "notes": f"[stub] Study notes (dev mode).\n\n## Key points\n- {excerpt[:120]}\n\n## Takeaways\n- …",
+        "mindmap": "# Topic (dev stub)\n## Start here\n- Basics\n- Key terms\n## Core concepts\n- Concept A\n- Concept B\n## Learning flow\n- First this\n- Then that\n## Go deeper\n- Advanced topic",
     }
     content = {t: templates.get(t, f"[stub] {t}") for t in types}
     return LLMResult(content=content, tokens_used=0)
