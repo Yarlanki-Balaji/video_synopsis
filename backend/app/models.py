@@ -89,19 +89,19 @@ class PasswordReset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-class EmailVerification(Base):
-    """A single-use, short-lived 6-digit OTP emailed to verify an account at
-    signup. Hashed at rest; capped attempts to resist brute force."""
+class PendingSignup(Base):
+    """A signup awaiting email verification. The real User row is NOT created
+    until the emailed OTP is confirmed — so a wrong or abandoned code never
+    leaves an account behind (and never consumes a beta slot). One per email;
+    the hashed password lives here only until verification."""
 
-    __tablename__ = "email_verifications"
+    __tablename__ = "pending_signups"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
     code_hash: Mapped[str] = mapped_column(String(64), index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

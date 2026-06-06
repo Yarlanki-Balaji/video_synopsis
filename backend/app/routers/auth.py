@@ -25,7 +25,7 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,7 +33,7 @@ from ..config import settings
 from ..db import get_session
 from ..deps import get_current_user
 from ..email import send_email
-from ..models import ClientType, EmailVerification, PasswordResetCode, Session, User, UserStatus
+from ..models import ClientType, PasswordResetCode, PendingSignup, Session, User, UserStatus
 from ..security import (
     create_access_token,
     dummy_verify,
@@ -134,70 +134,60 @@ async def _issue_session(
     _set_auth_cookies(response, access, raw_refresh)
 
 
-async def _send_email_otp(session: AsyncSession, user: User, background: BackgroundTasks) -> None:
-    """Invalidate any outstanding codes, mint a fresh 6-digit OTP (hashed at
-    rest), and queue the verification email (printed to the log in dev)."""
-    await session.execute(
-        update(EmailVerification)
-        .where(EmailVerification.user_id == user.id, EmailVerification.used_at.is_(None))
-        .values(used_at=utcnow())
-    )
-    code = generate_otp()
-    session.add(
-        EmailVerification(
-            user_id=user.id,
-            code_hash=hash_token(code),
-            expires_at=utcnow() + timedelta(minutes=settings.email_otp_ttl_minutes),
-        )
-    )
-    background.add_task(
-        send_email,
-        user.email,
-        "Your verification code",
+def _otp_email_body(code: str) -> str:
+    return (
         f"Your Video Synopsis verification code is: {code}\n\n"
-        f"It expires in {settings.email_otp_ttl_minutes} minutes.",
+        f"It expires in {settings.email_otp_ttl_minutes} minutes."
     )
+
+
+async def _verified_user_count(session: AsyncSession) -> int:
+    return (
+        await session.execute(
+            select(func.count()).select_from(User).where(User.email_verified_at.is_not(None))
+        )
+    ).scalar_one()
 
 
 # --- Endpoints ---------------------------------------------------------------
 
-@router.post("/signup", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+@router.post("/signup", status_code=status.HTTP_202_ACCEPTED)
 async def signup(body: SignupIn, background: BackgroundTasks, session: AsyncSession = Depends(get_session)):
+    """Begin signup: store a PENDING signup and email a 6-digit code. No real
+    account exists until the code is confirmed at /auth/verify-email — so a wrong
+    or abandoned code never creates an account or consumes a beta slot."""
     email = normalize_email(body.email)
 
     existing = (
         await session.execute(select(User).where(User.email == email))
     ).scalar_one_or_none()
     if existing is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Account already exists")
+        if existing.email_verified_at is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Account already exists")
+        # Legacy unverified account (pre-pending-signup) — clear it and continue.
+        await session.delete(existing)
+        await session.flush()
 
-    # Beta cap: stop new signups once we hit the user limit.
-    user_count = (await session.execute(select(func.count()).select_from(User))).scalar_one()
-    if user_count >= settings.max_users:
+    # Beta cap counts only real (verified) accounts.
+    if await _verified_user_count(session) >= settings.max_users:
         raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "We've reached our beta user limit. Please check back soon.",
+            status.HTTP_403_FORBIDDEN, "We've reached our beta user limit. Please check back soon."
         )
 
-    # Account starts UNVERIFIED (no auto-login). The client must confirm the
-    # emailed OTP at /auth/verify-email, which then logs the user in.
-    user = User(
-        email=email,
-        password_hash=hash_password(body.password),
-        status=UserStatus.active.value,
-        email_verified_at=None,
+    # Replace any prior pending signup for this email, then issue a fresh code.
+    await session.execute(delete(PendingSignup).where(PendingSignup.email == email))
+    code = generate_otp()
+    session.add(
+        PendingSignup(
+            email=email,
+            password_hash=hash_password(body.password),
+            code_hash=hash_token(code),
+            expires_at=utcnow() + timedelta(minutes=settings.email_otp_ttl_minutes),
+        )
     )
-    session.add(user)
-    try:
-        await session.flush()  # triggers the unique-email INSERT
-    except IntegrityError:
-        # Race: another signup created the same email between the check and flush.
-        await session.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "Account already exists")
-
-    await _send_email_otp(session, user, background)
     await session.commit()
-    return UserOut(id=user.id, email=user.email, status=user.status)
+    background.add_task(send_email, email, "Your verification code", _otp_email_body(code))
+    return {"status": "verification_sent"}
 
 
 @router.post("/login", response_model=UserOut)
@@ -328,35 +318,47 @@ async def me(user: User = Depends(get_current_user)):
 
 @router.post("/verify-email", response_model=UserOut)
 async def verify_email(body: VerifyEmailIn, response: Response, session: AsyncSession = Depends(get_session)):
-    """Confirm the signup OTP. On success the email is marked verified and the
-    user is signed in (cookies set)."""
+    """Confirm the signup code and CREATE the account, then sign in. The account
+    only comes into existence here — never on an unconfirmed code."""
     email = normalize_email(body.email)
-    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code.")
-    if user.email_verified_at is not None:
-        # Already verified — sign in (idempotent).
-        await _issue_session(session, user, response)
-        await session.commit()
-        return UserOut(id=user.id, email=user.email, status=user.status)
 
-    row = (
-        await session.execute(
-            select(EmailVerification)
-            .where(EmailVerification.user_id == user.id, EmailVerification.used_at.is_(None))
-            .order_by(EmailVerification.created_at.desc())
-        )
-    ).scalars().first()
-    if row is None or row.expires_at < utcnow() or row.attempts >= settings.email_otp_max_attempts:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code. Request a new one.")
+    existing = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if existing is not None and existing.email_verified_at is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This email is already verified. Please log in.")
 
-    if hash_token(body.code.strip()) != row.code_hash:
-        row.attempts += 1
+    pending = (
+        await session.execute(select(PendingSignup).where(PendingSignup.email == email))
+    ).scalar_one_or_none()
+    if pending is None or pending.expires_at < utcnow() or pending.attempts >= settings.email_otp_max_attempts:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code. Please sign up again.")
+    if hash_token(body.code.strip()) != pending.code_hash:
+        pending.attempts += 1
         await session.commit()
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Incorrect code.")
 
-    row.used_at = utcnow()
-    user.email_verified_at = utcnow()
+    # Code OK — re-check the cap (authoritative at creation), then create the user.
+    if await _verified_user_count(session) >= settings.max_users:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "We've reached our beta user limit. Please check back soon."
+        )
+    if existing is not None:  # legacy unverified row for this email
+        await session.delete(existing)
+        await session.flush()
+
+    user = User(
+        email=email,
+        password_hash=pending.password_hash,
+        status=UserStatus.active.value,
+        email_verified_at=utcnow(),
+    )
+    session.add(user)
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, "Account already exists")
+
+    await session.execute(delete(PendingSignup).where(PendingSignup.email == email))
     await _issue_session(session, user, response)  # verified -> sign in
     await session.commit()
     return UserOut(id=user.id, email=user.email, status=user.status)
@@ -366,12 +368,18 @@ async def verify_email(body: VerifyEmailIn, response: Response, session: AsyncSe
 async def resend_verification(
     body: EmailIn, background: BackgroundTasks, session: AsyncSession = Depends(get_session)
 ):
-    """Re-send the signup OTP. Always 202 (no account enumeration)."""
+    """Re-send the signup code for a pending signup. Always 202 (no enumeration)."""
     email = normalize_email(body.email)
-    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
-    if user is not None and user.email_verified_at is None:
-        await _send_email_otp(session, user, background)
+    pending = (
+        await session.execute(select(PendingSignup).where(PendingSignup.email == email))
+    ).scalar_one_or_none()
+    if pending is not None:
+        code = generate_otp()
+        pending.code_hash = hash_token(code)
+        pending.expires_at = utcnow() + timedelta(minutes=settings.email_otp_ttl_minutes)
+        pending.attempts = 0
         await session.commit()
+        background.add_task(send_email, email, "Your verification code", _otp_email_body(code))
     return {"status": "accepted"}
 
 
