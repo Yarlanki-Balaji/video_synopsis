@@ -17,12 +17,12 @@ import logging
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from .config import settings
 from .db import SessionLocal
 from .llm import RateLimited, RequestTooLarge, summarize_long as llm_summarize
-from .models import Job, JobStatus, Summary
+from .models import Job, JobStatus, PasswordResetCode, PendingSignup, Summary
 from .quota import open_breaker, record_tokens
 from .security import utcnow
 
@@ -261,6 +261,20 @@ async def reap_orphans() -> None:
         await session.commit()
 
 
+async def purge_expired_auth_codes() -> None:
+    """Delete expired, never-confirmed pending signups, plus expired or used
+    password-reset codes, so these short-lived rows don't accumulate."""
+    async with SessionLocal() as session:
+        now = utcnow()
+        await session.execute(delete(PendingSignup).where(PendingSignup.expires_at < now))
+        await session.execute(
+            delete(PasswordResetCode).where(
+                (PasswordResetCode.expires_at < now) | (PasswordResetCode.used_at.is_not(None))
+            )
+        )
+        await session.commit()
+
+
 async def _worker_loop() -> None:
     logger.info("job worker %s started", WORKER_ID)
     while not _stop.is_set():
@@ -283,6 +297,7 @@ async def _reaper_loop() -> None:
     while not _stop.is_set():
         try:
             await reap_orphans()
+            await purge_expired_auth_codes()
         except asyncio.CancelledError:
             break
         except Exception:
