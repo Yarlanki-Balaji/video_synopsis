@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import { api, errorDetail } from "@/lib/api";
 import { AuthShell, AuthError, Field, PasswordField, SubmitButton } from "@/components/auth";
+import { GoogleSignInButton } from "@/components/google-signin";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -64,6 +65,14 @@ export default function LoginPage() {
         {error && <AuthError>{error}</AuthError>}
         <SubmitButton busy={busy}>Log in</SubmitButton>
       </form>
+      {process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID && (
+        <div className="mt-5 flex flex-col gap-4">
+          <div className="flex items-center gap-3 text-xs text-muted">
+            <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
+          </div>
+          <GoogleSignInButton onError={setError} />
+        </div>
+      )}
     </AuthShell>
   );
 }

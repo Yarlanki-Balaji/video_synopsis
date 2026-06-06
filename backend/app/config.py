@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     # Comma-separated list of frontend origins allowed by CORS *and* CSRF.
     cors_origins: str = "http://localhost:3000"
 
+    # --- Google sign-in (login-only) ---
+    # OAuth 2.0 "Web application" client ID (…apps.googleusercontent.com). The
+    # frontend must use the SAME id (NEXT_PUBLIC_GOOGLE_CLIENT_ID). Unset -> the
+    # /auth/google endpoint and the button are disabled.
+    google_client_id: str | None = None
+
     # --- Auth / JWT ---
     # MUST be overridden in production (startup refuses the default there).
     jwt_secret: str = "dev-insecure-secret-change-me"

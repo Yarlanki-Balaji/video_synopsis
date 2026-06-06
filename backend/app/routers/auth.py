@@ -24,6 +24,7 @@ from fastapi import (
     Response,
     status,
 )
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -78,6 +79,10 @@ class ResetIn(BaseModel):
 class VerifyEmailIn(BaseModel):
     email: EmailStr
     code: str = Field(min_length=4, max_length=8)
+
+
+class GoogleAuthIn(BaseModel):
+    credential: str  # the Google ID token (JWT) from Google Identity Services
 
 
 class ChangePasswordIn(BaseModel):
@@ -209,6 +214,43 @@ async def login(body: LoginIn, response: Response, session: AsyncSession = Depen
     if user.email_verified_at is None:
         # Distinct 403 so the client can route the user to the verify-email page.
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Please verify your email to continue.")
+
+    await _issue_session(session, user, response)
+    await session.commit()
+    return UserOut(id=user.id, email=user.email, status=user.status)
+
+
+@router.post("/google", response_model=UserOut)
+async def google_login(body: GoogleAuthIn, response: Response, session: AsyncSession = Depends(get_session)):
+    """Sign in with Google — LOGIN ONLY. Verifies the Google ID token and signs
+    in ONLY if a verified account already exists for that email. It never creates
+    an account (signup stays email + password + OTP)."""
+    if not settings.google_client_id:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Google sign-in is not configured.")
+
+    from google.auth.transport import requests as google_requests
+    from google.oauth2 import id_token
+
+    try:
+        claims = await run_in_threadpool(
+            id_token.verify_oauth2_token,
+            body.credential,
+            google_requests.Request(),
+            settings.google_client_id,
+        )
+    except Exception:  # noqa: BLE001 — bad signature/audience/expiry
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid Google sign-in.")
+
+    email = normalize_email(claims.get("email") or "")
+    if not email or not claims.get("email_verified", False):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your Google account email isn't verified.")
+
+    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if user is None or user.email_verified_at is None or user.status != UserStatus.active.value:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "No verified account for this Google email. Please sign up and verify it first.",
+        )
 
     await _issue_session(session, user, response)
     await session.commit()
