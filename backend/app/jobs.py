@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 from datetime import timedelta
 from uuid import uuid4
 
@@ -29,6 +30,13 @@ from .security import utcnow
 from .transcript import TranscriptError
 
 logger = logging.getLogger("app.jobs")
+
+
+def _safe_unlink(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 WORKER_ID = uuid4().hex[:12]
 _sem = asyncio.Semaphore(1)
@@ -190,26 +198,37 @@ async def _run_job(job_id: str, fence: int) -> None:
         light_types = [t for t in job.summary_types.split(",") if t]
         want_notes = job.complete_notes
 
-    # Audio job: no captions were available, so download + transcribe the audio
-    # now (slow — heartbeated). Then persist the resolved transcript + its hash so
-    # the content-bound cache and history work like any other job.
-    if source == "audio" and not transcript:
-        if not video_id:
-            await _fail(job_id, fence, "No video to transcribe.", permanent=True)
-            return
+    # No captions: transcribe the audio now (slow — heartbeated). "audio" jobs
+    # download from YouTube; "upload" jobs read the file the user uploaded. Then
+    # persist the resolved transcript + hash so the cache/history work as usual.
+    if source in ("audio", "upload") and not transcript:
         await _set_phase(job_id, fence, "transcribing")
-        from .audio import transcribe_audio  # lazy import avoids a circular import
-
+        upload_src = os.path.join(settings.upload_path, f"{job_id}.src") if source == "upload" else None
         try:
             async with _Heartbeat(job_id, fence):
-                transcript = await transcribe_audio(video_id)
+                if source == "upload":
+                    from .audio import transcribe_upload  # lazy import avoids a cycle
+
+                    transcript = await transcribe_upload(upload_src)
+                else:
+                    if not video_id:
+                        raise TranscriptError("No video to transcribe.")
+                    from .audio import transcribe_audio
+
+                    transcript = await transcribe_audio(video_id)
         except TranscriptError as exc:
+            if upload_src:
+                _safe_unlink(upload_src)
             await _fail(job_id, fence, exc.detail, permanent=True)
             return
         except Exception:
-            logger.exception("audio transcription failed")
-            await _fail(job_id, fence, "Couldn't transcribe this video's audio.", permanent=True)
+            if upload_src:
+                _safe_unlink(upload_src)
+            logger.exception("%s transcription failed", source)
+            await _fail(job_id, fence, "Couldn't transcribe the audio.", permanent=True)
             return
+        if upload_src:
+            _safe_unlink(upload_src)  # uploaded file no longer needed
         transcript = transcript.strip()[: settings.transcript_max_chars]
         if len(transcript) < settings.transcript_min_chars:
             await _fail(job_id, fence, "The audio produced too little text to summarize.", permanent=True)

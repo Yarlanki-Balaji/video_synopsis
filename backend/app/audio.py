@@ -121,30 +121,63 @@ async def _gemini_transcribe(path: str) -> str:
             pass
 
 
+def extract_audio(src_path: str) -> str:
+    """Extract + compress a local video/audio file's audio to a small 16kHz-mono
+    mp3. Returns the mp3 path (caller deletes its dir). Blocking — run in a thread."""
+    _ensure_ffmpeg()
+    import shutil as _sh
+    import subprocess
+
+    ffmpeg = _sh.which("ffmpeg") or "ffmpeg"
+    tmpdir = tempfile.mkdtemp(prefix="vsai_upload_")
+    out = os.path.join(tmpdir, "audio.mp3")
+    # -vn drops video; 16kHz mono ~32kbps keeps it tiny (fits Groq's 25MB cap).
+    cmd = [ffmpeg, "-y", "-i", src_path, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", out]
+    proc = subprocess.run(cmd, capture_output=True)
+    if proc.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise TranscriptError("Couldn't extract audio — is the file a valid video/audio?")
+    return out
+
+
+async def _transcribe_file(path: str) -> str:
+    """Transcribe a local audio file to English (Whisper first, Gemini fallback)."""
+    size = os.path.getsize(path)
+    # Whisper first when the file fits the free-tier cap.
+    if settings.groq_api_key and size <= settings.groq_audio_max_bytes:
+        try:
+            text = await _groq_translate(path)
+            if text.strip():
+                return text
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Groq Whisper failed (%s); trying Gemini", exc)
+    # Gemini fallback (no size cap) — also covers a Whisper failure.
+    if settings.gemini_keys:
+        text = await _gemini_transcribe(path)
+        if text.strip():
+            return text
+    raise NoTranscript("Couldn't transcribe the audio.")
+
+
 async def transcribe_audio(video_id: str) -> str:
-    """Download a video's audio and transcribe it to English (Whisper -> Gemini)."""
+    """Download a YouTube video's audio and transcribe it to English."""
     if not settings.audio_fallback_enabled:
         raise NoTranscript("This video has no captions, and audio transcription is disabled.")
     if not (settings.groq_api_key or settings.gemini_keys):
         raise NoTranscript("This video has no captions, and no transcription engine is configured.")
-
     path = await run_in_threadpool(_download_audio, video_id)
-    tmpdir = os.path.dirname(path)
     try:
-        size = os.path.getsize(path)
-        # Whisper first when the file fits the free-tier cap.
-        if settings.groq_api_key and size <= settings.groq_audio_max_bytes:
-            try:
-                text = await _groq_translate(path)
-                if text.strip():
-                    return text
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Groq Whisper failed (%s); trying Gemini", exc)
-        # Gemini fallback (no size cap) — also covers a Whisper failure.
-        if settings.gemini_keys:
-            text = await _gemini_transcribe(path)
-            if text.strip():
-                return text
-        raise NoTranscript("Couldn't transcribe this video's audio.")
+        return await _transcribe_file(path)
     finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+
+async def transcribe_upload(src_path: str) -> str:
+    """Extract audio from an uploaded video/audio file and transcribe it to English."""
+    if not (settings.groq_api_key or settings.gemini_keys):
+        raise TranscriptError("No transcription engine is configured.")
+    mp3 = await run_in_threadpool(extract_audio, src_path)
+    try:
+        return await _transcribe_file(mp3)
+    finally:
+        shutil.rmtree(os.path.dirname(mp3), ignore_errors=True)

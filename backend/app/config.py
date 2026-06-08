@@ -143,6 +143,18 @@ class Settings(BaseSettings):
     groq_audio_max_bytes: int = 25 * 1024 * 1024     # Groq free-tier per-file cap
     audio_transcribe_timeout: int = 300              # seconds for the ASR request
 
+    # --- Video/audio file upload (extract audio -> transcribe -> summarize) ---
+    upload_enabled: bool = True
+    max_upload_mb: int = 200                          # reject larger uploads
+    upload_dir: str = ""                             # blank -> <temp>/vsai_uploads
+
+    @property
+    def upload_path(self) -> str:
+        import os
+        import tempfile
+
+        return self.upload_dir or os.path.join(tempfile.gettempdir(), "vsai_uploads")
+
     # --- Job worker (E2–E4) ---
     job_lease_seconds: int = 180           # > worst-case single Groq call (+ repair)
     job_max_attempts: int = 3

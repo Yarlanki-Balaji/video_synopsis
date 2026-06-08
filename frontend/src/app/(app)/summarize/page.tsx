@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { api, errorDetail } from "@/lib/api";
+import { api, errorDetail, API_URL } from "@/lib/api";
 import { Button, Card, Chip, IconButton, Icons, Input, Spinner, Textarea } from "@/components/ui";
 import { SummaryCard } from "@/components/summary";
 import { useToast } from "@/components/toast";
@@ -18,8 +18,9 @@ import {
 
 const MIN_CHARS = 50;
 const MAX_CHARS = 200_000;
+const MAX_UPLOAD_MB = 200;
 
-type Mode = "url" | "paste";
+type Mode = "url" | "paste" | "upload";
 
 type JobView = {
   status: string;
@@ -68,6 +69,7 @@ export default function SummarizePage() {
   const toast = useToast();
   const [mode, setMode] = useState<Mode>("url");
   const [url, setUrl] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const [transcript, setTranscript] = useState("");
   const [submitted, setSubmitted] = useState("");
   const [videoTitle, setVideoTitle] = useState<string | null>(null);
@@ -87,7 +89,11 @@ export default function SummarizePage() {
   const canSubmit =
     !busy &&
     hasType &&
-    (mode === "url" ? url.trim().length > 0 : len >= MIN_CHARS && !tooLong);
+    (mode === "url"
+      ? url.trim().length > 0
+      : mode === "upload"
+        ? !!file
+        : len >= MIN_CHARS && !tooLong);
 
   function toggle(key: string) {
     setSelected((prev) => {
@@ -139,6 +145,27 @@ export default function SummarizePage() {
     const types = SUMMARY_TYPES.map((t) => t.key).filter((k) => selected.has(k));
     setBusy(true);
     try {
+      // Upload mode: send the file; the worker extracts audio, transcribes, summarizes.
+      if (mode === "upload") {
+        if (!file) return setError("Choose a video or audio file.");
+        if (file.size > MAX_UPLOAD_MB * 1024 * 1024) return setError(`File exceeds the ${MAX_UPLOAD_MB} MB limit.`);
+        setStage("summarizing");
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("summary_types", types.join(","));
+        fd.append("complete_notes", String(notes));
+        const res = await fetch(`${API_URL}/api/upload`, { method: "POST", credentials: "include", body: fd });
+        if (res.status === 401) return router.push("/login");
+        if (!res.ok) throw new Error(await errorDetail(res, "Upload failed"));
+        const { job_id } = (await res.json()) as { job_id: string };
+        window.dispatchEvent(new Event("usage:changed"));
+        const final = await pollJob(job_id, setJob);
+        setJob(final);
+        if (final.transcript) setSubmitted(final.transcript);
+        toast.success("Summary ready", "Scroll down to read, copy, or download it.");
+        return;
+      }
+
       // Resolve the transcript text + optional video id.
       let text = transcript;
       let videoId: string | undefined;
@@ -260,14 +287,21 @@ export default function SummarizePage() {
               onClick={() => setMode("url")}
               className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition-colors ${mode === "url" ? "bg-surface font-medium text-fg shadow-[var(--shadow-xs-light)]" : "text-muted hover:text-fg"}`}
             >
-              <Icons.logo className="h-4 w-4" /> YouTube URL
+              <Icons.logo className="h-4 w-4" /> YouTube
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("upload")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition-colors ${mode === "upload" ? "bg-surface font-medium text-fg shadow-[var(--shadow-xs-light)]" : "text-muted hover:text-fg"}`}
+            >
+              <Icons.upload className="h-4 w-4" /> Upload
             </button>
             <button
               type="button"
               onClick={() => setMode("paste")}
               className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition-colors ${mode === "paste" ? "bg-surface font-medium text-fg shadow-[var(--shadow-xs-light)]" : "text-muted hover:text-fg"}`}
             >
-              <Icons.fileText className="h-4 w-4" /> Paste transcript
+              <Icons.fileText className="h-4 w-4" /> Paste
             </button>
           </div>
 
@@ -288,6 +322,28 @@ export default function SummarizePage() {
                 />
               </div>
               <p className="text-xs text-muted">Paste a YouTube link — we&apos;ll fetch the transcript and summarize it.</p>
+            </div>
+          ) : mode === "upload" ? (
+            <div className="flex flex-col gap-2">
+              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[var(--radius-field)] border border-dashed border-border-strong bg-surface-2/40 px-4 py-8 text-center transition-colors hover:border-accent hover:bg-surface-2/70">
+                <Icons.upload className="h-6 w-6 text-muted" />
+                {file ? (
+                  <span className="text-sm font-medium text-fg">
+                    {file.name} <span className="font-normal text-muted">({(file.size / 1024 / 1024).toFixed(1)} MB)</span>
+                  </span>
+                ) : (
+                  <>
+                    <span className="text-sm font-medium text-fg">Choose a video or audio file</span>
+                    <span className="text-xs text-muted">We extract the audio, transcribe &amp; translate it, then summarize. Max {MAX_UPLOAD_MB} MB.</span>
+                  </>
+                )}
+                <input type="file" accept="video/*,audio/*" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              </label>
+              {file && (
+                <button type="button" onClick={() => setFile(null)} className="self-start text-xs text-muted transition-colors hover:text-fg">
+                  Remove file
+                </button>
+              )}
             </div>
           ) : (
             <div className="flex flex-col gap-2">

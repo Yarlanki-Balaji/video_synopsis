@@ -6,11 +6,12 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -34,7 +35,14 @@ from ..transcript import (
 router = APIRouter(prefix="/api", tags=["summarize"])
 
 VALID_TYPES = set(LIGHT_TYPES)
-VALID_SOURCES = {"paste", "api", "extension", "audio"}
+VALID_SOURCES = {"paste", "api", "extension", "audio", "upload"}
+
+
+def _safe_unlink(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 class SummarizeIn(BaseModel):
@@ -223,6 +231,79 @@ async def get_transcript(body: TranscriptIn, user: User = Depends(get_current_us
         text = text[: settings.transcript_max_chars].rstrip()
     title, duration = await fetch_metadata(video_id)
     return TranscriptOut(video_id=video_id, title=title, duration=duration, transcript=text, truncated=truncated)
+
+
+@router.post("/upload", response_model=SummarizeOut, status_code=status.HTTP_202_ACCEPTED)
+async def upload_video(
+    file: UploadFile = File(...),
+    summary_types: str = Form(""),
+    complete_notes: bool = Form(False),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Upload a video/audio file. The worker extracts its audio, transcribes +
+    translates it to English, then summarizes — no captions needed."""
+    if not (settings.upload_enabled and (settings.groq_api_key or settings.gemini_keys)):
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Video upload isn't available right now.")
+    types = sorted({t for t in summary_types.split(",") if t in VALID_TYPES})
+    if not types and not complete_notes:
+        raise HTTPException(422, "Pick at least one summary type.")
+
+    # Stream the upload to disk with a hard size cap (named by the job id so the
+    # worker can find it without a schema change).
+    job_id = uuid4().hex
+    os.makedirs(settings.upload_path, exist_ok=True)
+    dest = os.path.join(settings.upload_path, f"{job_id}.src")
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    size = 0
+    try:
+        with open(dest, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(
+                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        f"File exceeds the {settings.max_upload_mb} MB limit.",
+                    )
+                out.write(chunk)
+    except HTTPException:
+        _safe_unlink(dest)
+        raise
+    except Exception:
+        _safe_unlink(dest)
+        raise HTTPException(400, "Upload failed.")
+    if size == 0:
+        _safe_unlink(dest)
+        raise HTTPException(422, "The uploaded file is empty.")
+
+    # Quota (counts as one job). Release the saved file if denied.
+    decision = await check_and_reserve(session, user.id)
+    if not decision.allowed:
+        await session.rollback()
+        _safe_unlink(dest)
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, decision.reason or "Daily limit reached.")
+
+    job = Job(
+        id=job_id,
+        user_id=user.id,
+        idempotency_key=f"upload:{job_id}",
+        source="upload",
+        video_id=None,
+        transcript_sha256="",
+        transcript="",
+        lang="en",
+        summary_types=",".join(types),
+        complete_notes=complete_notes,
+        force=False,
+        status=JobStatus.queued.value,
+        phase="queued",
+    )
+    session.add(job)
+    await session.commit()
+    return SummarizeOut(job_id=job.id, status=job.status)
 
 
 @router.get("/usage")
