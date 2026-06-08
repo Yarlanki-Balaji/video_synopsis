@@ -208,7 +208,7 @@ async def get_transcript(body: TranscriptIn, user: User = Depends(get_current_us
     try:
         text = await fetch_captions(video_id)
     except NoTranscript:
-        audio_ok = settings.audio_fallback_enabled and bool(settings.groq_api_key or settings.gemini_api_key)
+        audio_ok = settings.audio_fallback_enabled and bool(settings.groq_api_key or settings.gemini_keys)
         if not audio_ok:
             raise HTTPException(422, "This video has no captions available.")
         title, duration = await fetch_metadata(video_id)

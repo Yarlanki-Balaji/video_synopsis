@@ -71,6 +71,9 @@ class Settings(BaseSettings):
 
     # --- Gemini (alternative summarizer; 1M-token context handles big transcripts
     # in one request, no map-reduce) ---
+    # GEMINI_API_KEY may hold ONE key or a COMMA-SEPARATED list. With several keys
+    # the summarizer rotates on rate/quota (429) errors — multiplying the free
+    # tier's ~250 requests/day per key across all of them.
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
     gemini_max_output_tokens: int = 65536       # 2.5 Flash max — so long notes never truncate
@@ -79,14 +82,25 @@ class Settings(BaseSettings):
     llm_provider: str = "auto"
 
     @property
+    def gemini_keys(self) -> list[str]:
+        """All configured Gemini keys (GEMINI_API_KEY split on commas), deduped
+        in order. Empty when none is set."""
+        seen: dict[str, None] = {}
+        for k in (self.gemini_api_key or "").split(","):
+            k = k.strip()
+            if k:
+                seen.setdefault(k, None)
+        return list(seen)
+
+    @property
     def effective_llm_provider(self) -> str:
         choice = (self.llm_provider or "auto").lower()
         if choice == "gemini":
-            return "gemini" if self.gemini_api_key else "stub"
+            return "gemini" if self.gemini_keys else "stub"
         if choice == "groq":
             return "groq" if self.groq_api_key else "stub"
         # auto
-        if self.gemini_api_key:
+        if self.gemini_keys:
             return "gemini"
         if self.groq_api_key:
             return "groq"

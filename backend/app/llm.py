@@ -208,28 +208,76 @@ def _fit_for_gemini(transcript: str) -> str:
     return transcript[: max(1, int(len(transcript) * ratio))]
 
 
-_GEMINI_CLIENT = None
+_GEMINI_CLIENTS: dict[str, object] = {}  # api_key -> cached genai.Client
+_gemini_idx = 0                           # index of the currently active key
+
+
+def _gemini_client_for(key: str):
+    client = _GEMINI_CLIENTS.get(key)
+    if client is None:
+        from google import genai
+
+        client = genai.Client(api_key=key)
+        _GEMINI_CLIENTS[key] = client
+    return client
 
 
 def gemini_client():
-    """Cached google-genai client — reused across calls so its HTTP connection
-    pool/keep-alive is shared instead of rebuilt on every request."""
-    global _GEMINI_CLIENT
-    if _GEMINI_CLIENT is None:
-        from google import genai
+    """The currently active Gemini client (cached per key, so its HTTP connection
+    pool is reused). The active key advances on 429s via _gemini_generate()."""
+    keys = settings.gemini_keys
+    if not keys:
+        raise LLMError("No Gemini API key configured")
+    return _gemini_client_for(keys[_gemini_idx % len(keys)])
 
-        _GEMINI_CLIENT = genai.Client(api_key=settings.gemini_api_key)
-    return _GEMINI_CLIENT
+
+async def _gemini_generate(contents, config):
+    """Call Gemini, ROTATING to the next API key on a rate/quota (429) error and
+    backing off on transient 5xx. With multiple keys this multiplies the free
+    tier's per-key daily quota; the active key is sticky across calls."""
+    from google.genai import errors as gerr
+
+    global _gemini_idx
+    keys = settings.gemini_keys
+    if not keys:
+        raise LLMError("No Gemini API key configured")
+    n = len(keys)
+    last_exc: Exception | None = None
+    keys_tried = 0
+    server_retries = 0
+    while keys_tried < n:
+        try:
+            return await _gemini_client_for(keys[_gemini_idx % n]).aio.models.generate_content(
+                model=settings.gemini_model, contents=contents, config=config
+            )
+        except gerr.ClientError as exc:
+            if getattr(exc, "code", None) == 429:  # this key is rate/quota limited
+                last_exc = exc
+                keys_tried += 1
+                _gemini_idx = (_gemini_idx + 1) % n
+                if n > 1:
+                    logger.warning("Gemini key rate-limited (429); rotating to key %d/%d", (_gemini_idx % n) + 1, n)
+                continue
+            raise LLMError(f"Gemini request rejected: {str(exc)[:160]}") from exc
+        except gerr.ServerError as exc:  # transient 5xx/503 — back off on the SAME key
+            last_exc = exc
+            server_retries += 1
+            if server_retries > 4:
+                break
+            await asyncio.sleep(2 ** min(server_retries, 4))
+        except gerr.APIError as exc:
+            raise LLMError(f"Gemini error: {str(exc)[:160]}") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise LLMError(f"Gemini request failed: {type(exc).__name__}") from exc
+    raise RateLimited(f"All {n} Gemini key(s) busy/exhausted: {str(last_exc)[:160]}")
 
 
 async def _gemini_summarize(transcript: str, types: list[str]) -> LLMResult:
     """Single-request summary via Gemini. Its 1M-token context fits the whole
     transcript at once — no chunking — so summaries are higher quality and big
     or non-Latin transcripts don't hit per-request limits."""
-    from google.genai import errors as gerr
     from google.genai import types as gt
 
-    client = gemini_client()
     transcript = _fit_for_gemini(transcript)
 
     # A SINGLE type (e.g. "notes") is generated as FREE-FORM markdown, not JSON.
@@ -266,31 +314,8 @@ async def _gemini_summarize(transcript: str, types: list[str]) -> LLMResult:
         )
         contents = _user_prompt(transcript, types)
 
-    # Transient errors (503 "high demand", 5xx, brief 429s) are retried with
-    # exponential backoff before giving up — Gemini's free tier spikes often.
-    resp = None
-    last_exc: Exception | None = None
-    for attempt in range(4):
-        try:
-            resp = await client.aio.models.generate_content(
-                model=settings.gemini_model, contents=contents, config=config
-            )
-            break
-        except gerr.ServerError as exc:  # 5xx incl. 503 overloaded
-            last_exc = exc
-            await asyncio.sleep(2 ** attempt)
-        except gerr.ClientError as exc:
-            if getattr(exc, "code", None) == 429:  # transient rate limit
-                last_exc = exc
-                await asyncio.sleep(2 ** attempt)
-                continue
-            raise LLMError(f"Gemini request rejected: {str(exc)[:160]}") from exc
-        except gerr.APIError as exc:
-            raise LLMError(f"Gemini error: {str(exc)[:160]}") from exc
-        except Exception as exc:  # noqa: BLE001
-            raise LLMError(f"Gemini request failed: {type(exc).__name__}") from exc
-    if resp is None:
-        raise RateLimited(f"Gemini busy after retries: {str(last_exc)[:160]}")
+    # One call, with key rotation on rate/quota limits + backoff on transient 5xx.
+    resp = await _gemini_generate(contents, config)
 
     if _gemini_truncated(resp):
         logger.warning("Gemini hit the output cap for types=%s — summary may be cut off", types)

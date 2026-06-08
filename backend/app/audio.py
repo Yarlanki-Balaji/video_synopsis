@@ -125,7 +125,7 @@ async def transcribe_audio(video_id: str) -> str:
     """Download a video's audio and transcribe it to English (Whisper -> Gemini)."""
     if not settings.audio_fallback_enabled:
         raise NoTranscript("This video has no captions, and audio transcription is disabled.")
-    if not (settings.groq_api_key or settings.gemini_api_key):
+    if not (settings.groq_api_key or settings.gemini_keys):
         raise NoTranscript("This video has no captions, and no transcription engine is configured.")
 
     path = await run_in_threadpool(_download_audio, video_id)
@@ -141,7 +141,7 @@ async def transcribe_audio(video_id: str) -> str:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Groq Whisper failed (%s); trying Gemini", exc)
         # Gemini fallback (no size cap) — also covers a Whisper failure.
-        if settings.gemini_api_key:
+        if settings.gemini_keys:
             text = await _gemini_transcribe(path)
             if text.strip():
                 return text
