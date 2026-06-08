@@ -97,9 +97,9 @@ async def _groq_translate(path: str) -> str:
 
 async def _gemini_transcribe(path: str) -> str:
     """Gemini fallback (no size cap): upload the audio, transcribe + translate to English."""
-    from google import genai
+    from .llm import gemini_client
 
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = gemini_client()
     uploaded = await client.aio.files.upload(file=path)
     try:
         resp = await client.aio.models.generate_content(

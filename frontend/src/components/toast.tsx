@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 
 import { Icons, IconButton } from "./ui";
 
@@ -84,8 +84,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const success = useCallback((title: string, description?: string) => toast({ title, description, variant: "success" }), [toast]);
   const error = useCallback((title: string, description?: string) => toast({ title, description, variant: "danger", duration: 6000 }), [toast]);
 
+  // Stable context value so consumers don't re-render when toasts change.
+  const ctx = useMemo(() => ({ toast, dismiss, success, error }), [toast, dismiss, success, error]);
+
   return (
-    <ToastContext.Provider value={{ toast, dismiss, success, error }}>
+    <ToastContext.Provider value={ctx}>
       {children}
       <div
         className="pointer-events-none fixed inset-x-0 bottom-0 z-[100] flex flex-col items-center gap-2 p-4 sm:bottom-4 sm:right-4 sm:left-auto sm:items-end sm:p-0"

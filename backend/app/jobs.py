@@ -200,19 +200,26 @@ async def _run_job(job_id: str, fence: int) -> None:
     need_notes = want_notes if force else (want_notes and "notes" not in existing)
     common = dict(tsha=tsha, lang=lang, source=source, video_id=video_id, force=force)
 
-    try:
+    # Plan the generation steps. Gemini (1M context, ample output) produces ALL
+    # requested types in ONE request — fewer round-trips, faster — while Groq
+    # keeps notes a separate step to respect its small per-request output budget.
+    if settings.effective_llm_provider == "gemini":
+        wanted = missing_light + (["notes"] if need_notes else [])
+        steps = [("summarizing", wanted)] if wanted else []
+    else:
+        steps = []
         if missing_light:
-            await _set_phase(job_id, fence, "summarizing")
-            async with _Heartbeat(job_id, fence):
-                r = await llm_summarize(transcript, missing_light)
-            # Persist immediately so a later notes failure can't discard this.
-            if not await _persist(job_id, fence, r.content, r.tokens_used, **common):
-                return
+            steps.append(("summarizing", missing_light))
         if need_notes:
-            await _set_phase(job_id, fence, "notes")
+            steps.append(("notes", ["notes"]))
+
+    try:
+        for phase, gen_types in steps:
+            await _set_phase(job_id, fence, phase)
             async with _Heartbeat(job_id, fence):
-                r = await llm_summarize(transcript, ["notes"])
-            if not await _persist(job_id, fence, {"notes": r.content["notes"]}, r.tokens_used, **common):
+                r = await llm_summarize(transcript, gen_types)
+            # Persist each step immediately so a later step's failure can't discard it.
+            if not await _persist(job_id, fence, r.content, r.tokens_used, **common):
                 return
     except RequestTooLarge:
         await _fail(

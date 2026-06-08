@@ -177,15 +177,28 @@ def _fit_for_gemini(transcript: str) -> str:
     return transcript[: max(1, int(len(transcript) * ratio))]
 
 
+_GEMINI_CLIENT = None
+
+
+def gemini_client():
+    """Cached google-genai client — reused across calls so its HTTP connection
+    pool/keep-alive is shared instead of rebuilt on every request."""
+    global _GEMINI_CLIENT
+    if _GEMINI_CLIENT is None:
+        from google import genai
+
+        _GEMINI_CLIENT = genai.Client(api_key=settings.gemini_api_key)
+    return _GEMINI_CLIENT
+
+
 async def _gemini_summarize(transcript: str, types: list[str]) -> LLMResult:
     """Single-request summary via Gemini. Its 1M-token context fits the whole
     transcript at once — no chunking — so summaries are higher quality and big
     or non-Latin transcripts don't hit per-request limits."""
-    from google import genai
     from google.genai import errors as gerr
     from google.genai import types as gt
 
-    client = genai.Client(api_key=settings.gemini_api_key)
+    client = gemini_client()
     transcript = _fit_for_gemini(transcript)
     # Force the exact keys, each a STRING. Without this Gemini may return e.g.
     # "bullets" as a JSON array or omit keys, which breaks parsing.

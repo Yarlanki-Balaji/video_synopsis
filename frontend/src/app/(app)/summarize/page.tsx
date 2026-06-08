@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { api, errorDetail } from "@/lib/api";
@@ -99,22 +99,25 @@ export default function SummarizePage() {
     }
   }
 
-  async function pollJob(jobId: string, onUpdate?: (j: JobView) => void): Promise<JobView> {
-    for (let i = 0; i < 400; i++) {
-      const res = await api(`/api/jobs/${jobId}`);
-      if (res.status === 401) {
-        router.push("/login");
-        throw new Error("Your session expired.");
+  const pollJob = useCallback(
+    async (jobId: string, onUpdate?: (j: JobView) => void): Promise<JobView> => {
+      for (let i = 0; i < 400; i++) {
+        const res = await api(`/api/jobs/${jobId}`);
+        if (res.status === 401) {
+          router.push("/login");
+          throw new Error("Your session expired.");
+        }
+        if (!res.ok) throw new Error("Lost track of the job.");
+        const data = (await res.json()) as JobView;
+        onUpdate?.(data);
+        if (data.status === "done") return data;
+        if (data.status === "error") throw new Error(data.error || "The job failed.");
+        await sleep(1500);
       }
-      if (!res.ok) throw new Error("Lost track of the job.");
-      const data = (await res.json()) as JobView;
-      onUpdate?.(data);
-      if (data.status === "done") return data;
-      if (data.status === "error") throw new Error(data.error || "The job failed.");
-      await sleep(1500);
-    }
-    throw new Error("Timed out waiting for the summary.");
-  }
+      throw new Error("Timed out waiting for the summary.");
+    },
+    [router]
+  );
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -175,7 +178,7 @@ export default function SummarizePage() {
     }
   }
 
-  async function regenerate(type: string) {
+  const regenerate = useCallback(async (type: string) => {
     if (!submitted) return;
     setRegen(type);
     try {
@@ -207,7 +210,7 @@ export default function SummarizePage() {
     } finally {
       setRegen(null);
     }
-  }
+  }, [submitted, mode, pollJob, toast, router]);
 
   const done = job?.status === "done";
   const keys = useMemo(() => (job ? orderedKeys(job.summary_types, job.complete_notes) : []), [job]);

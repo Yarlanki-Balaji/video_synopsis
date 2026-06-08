@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 
 import { Card, IconButton, Icons, Spinner } from "./ui";
 import { Markdown } from "./markdown";
@@ -25,7 +25,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-export function SummaryCard({
+export const SummaryCard = memo(function SummaryCard({
   type,
   content,
   onRegenerate,
@@ -67,4 +67,4 @@ export function SummaryCard({
       {type === "mindmap" ? <MindMap markdown={content} /> : <Markdown>{content}</Markdown>}
     </Card>
   );
-}
+});
