@@ -77,7 +77,8 @@ export default function SummarizePage() {
   const [selected, setSelected] = useState<Set<string>>(new Set(SUMMARY_TYPES.map((t) => t.key)));
   const [notes, setNotes] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [stage, setStage] = useState<"fetching" | "summarizing" | null>(null);
+  const [stage, setStage] = useState<"fetching" | "extracting" | "summarizing" | null>(null);
+  const [extractPct, setExtractPct] = useState(0);
   const [regen, setRegen] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<JobView | null>(null);
@@ -145,13 +146,33 @@ export default function SummarizePage() {
     const types = SUMMARY_TYPES.map((t) => t.key).filter((k) => selected.has(k));
     setBusy(true);
     try {
-      // Upload mode: send the file; the worker extracts audio, transcribes, summarizes.
+      // Upload mode: extract the audio IN THE BROWSER (so only a few MB upload,
+      // regardless of video length), then send that. Falls back to the raw file
+      // if browser extraction fails and the file is within the direct cap.
       if (mode === "upload") {
         if (!file) return setError("Choose a video or audio file.");
-        if (file.size > MAX_UPLOAD_MB * 1024 * 1024) return setError(`File exceeds the ${MAX_UPLOAD_MB} MB limit.`);
+        let blob: Blob = file;
+        let name = file.name;
+        if (!file.type.startsWith("audio/")) {
+          setStage("extracting");
+          setExtractPct(0);
+          try {
+            const { extractAudio } = await import("@/lib/extract-audio");
+            blob = await extractAudio(file, setExtractPct);
+            name = file.name.replace(/\.[^.]+$/, "") + ".mp3";
+          } catch {
+            if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+              throw new Error(
+                `Couldn't process this file in the browser, and it's over the ${MAX_UPLOAD_MB} MB direct-upload limit. Try a lower-resolution file or upload the audio.`
+              );
+            }
+            blob = file;
+            name = file.name; // fall back: let the server extract the audio
+          }
+        }
         setStage("summarizing");
         const fd = new FormData();
-        fd.append("file", file);
+        fd.append("file", blob, name);
         fd.append("summary_types", types.join(","));
         fd.append("complete_notes", String(notes));
         const res = await fetch(`${API_URL}/api/upload`, { method: "POST", credentials: "include", body: fd });
@@ -274,7 +295,12 @@ export default function SummarizePage() {
     }
   }
 
-  const progressLabel = stage === "fetching" ? "Fetching transcript" : PHASE_LABEL[job?.phase ?? ""] ?? "Summarizing";
+  const progressLabel =
+    stage === "fetching"
+      ? "Fetching transcript"
+      : stage === "extracting"
+        ? `Extracting audio${extractPct ? ` ${Math.round(extractPct * 100)}%` : ""}`
+        : PHASE_LABEL[job?.phase ?? ""] ?? "Summarizing";
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-6 sm:px-5 sm:py-8">
@@ -334,7 +360,7 @@ export default function SummarizePage() {
                 ) : (
                   <>
                     <span className="text-sm font-medium text-fg">Choose a video or audio file</span>
-                    <span className="text-xs text-muted">We extract the audio, transcribe &amp; translate it, then summarize. Max {MAX_UPLOAD_MB} MB.</span>
+                    <span className="text-xs text-muted">The audio is extracted in your browser, so only a few MB upload — long videos work too. Very large files may need a lower resolution.</span>
                   </>
                 )}
                 <input type="file" accept="video/*,audio/*" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
@@ -404,7 +430,7 @@ export default function SummarizePage() {
             <Button type="submit" disabled={!canSubmit}>
               {busy ? (
                 <>
-                  <Spinner className="h-4 w-4" /> {stage === "fetching" ? "Fetching…" : "Summarizing…"}
+                  <Spinner className="h-4 w-4" /> {stage === "fetching" ? "Fetching…" : stage === "extracting" ? "Extracting…" : "Summarizing…"}
                 </>
               ) : (
                 <>
