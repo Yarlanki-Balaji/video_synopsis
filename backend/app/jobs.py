@@ -238,27 +238,43 @@ async def _run_job(job_id: str, fence: int) -> None:
     need_notes = want_notes if force else (want_notes and "notes" not in existing)
     common = dict(tsha=tsha, lang=lang, source=source, video_id=video_id, force=force)
 
-    # Plan the generation steps. Gemini (1M context, ample output) produces ALL
-    # requested types in ONE request — fewer round-trips, faster — while Groq
-    # keeps notes a separate step to respect its small per-request output budget.
-    if settings.effective_llm_provider == "gemini":
-        wanted = missing_light + (["notes"] if need_notes else [])
-        steps = [("summarizing", wanted)] if wanted else []
-    else:
-        steps = []
-        if missing_light:
-            steps.append(("summarizing", missing_light))
-        if need_notes:
-            steps.append(("notes", ["notes"]))
+    # Generation groups — notes is ALWAYS its own call so it gets the full output
+    # budget (comprehensive notes otherwise gets squeezed/truncated when bundled).
+    groups: list[tuple[str, list[str]]] = []
+    if missing_light:
+        groups.append(("summarizing", missing_light))
+    if need_notes:
+        groups.append(("notes", ["notes"]))
 
     try:
-        for phase, gen_types in steps:
-            await _set_phase(job_id, fence, phase)
+        if settings.effective_llm_provider == "gemini" and len(groups) > 1:
+            # Independent Gemini calls run concurrently — each with its own full
+            # output budget (no truncation), at ~one call's wall-clock. Persist
+            # whatever succeeds, then surface the first error so retry finishes the
+            # rest (already-cached groups are skipped on the next attempt).
+            await _set_phase(job_id, fence, "summarizing")
             async with _Heartbeat(job_id, fence):
-                r = await llm_summarize(transcript, gen_types)
-            # Persist each step immediately so a later step's failure can't discard it.
-            if not await _persist(job_id, fence, r.content, r.tokens_used, **common):
-                return
+                results = await asyncio.gather(
+                    *(llm_summarize(transcript, g[1]) for g in groups),
+                    return_exceptions=True,
+                )
+            err: Exception | None = None
+            for r in results:
+                if isinstance(r, Exception):
+                    err = err or r
+                    continue
+                if not await _persist(job_id, fence, r.content, r.tokens_used, **common):
+                    return
+            if err is not None:
+                raise err
+        else:
+            for phase, gen_types in groups:
+                await _set_phase(job_id, fence, phase)
+                async with _Heartbeat(job_id, fence):
+                    r = await llm_summarize(transcript, gen_types)
+                # Persist each group immediately so a later failure can't discard it.
+                if not await _persist(job_id, fence, r.content, r.tokens_used, **common):
+                    return
     except RequestTooLarge:
         await _fail(
             job_id, fence,

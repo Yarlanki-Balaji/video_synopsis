@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     # in one request, no map-reduce) ---
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
-    gemini_max_output_tokens: int = 16384
+    gemini_max_output_tokens: int = 32768       # headroom so long notes don't truncate
     gemini_max_input_tokens: int = 900_000     # safety cap well under the 1M context
     # Summarizer backend: "auto" (Gemini if its key is set, else Groq), "gemini", "groq".
     llm_provider: str = "auto"
