@@ -28,9 +28,17 @@ type JobView = {
   summaries: Record<string, string>;
   complete_notes: boolean;
   summary_types: string[];
+  transcript?: string;
 };
 
-type TranscriptOut = { video_id: string; title: string | null; duration: number | null; transcript: string; truncated: boolean };
+type TranscriptOut = {
+  video_id: string;
+  title: string | null;
+  duration: number | null;
+  transcript: string;
+  truncated: boolean;
+  needs_audio?: boolean;
+};
 
 function formatDuration(s: number): string {
   const h = Math.floor(s / 3600);
@@ -44,6 +52,7 @@ function formatDuration(s: number): string {
 const PHASE_LABEL: Record<string, string> = {
   queued: "Queued",
   claimed: "Starting up",
+  transcribing: "Transcribing audio",
   summarizing: "Summarizing",
   notes: "Writing study notes",
   cached: "Retrieving",
@@ -142,13 +151,20 @@ export default function SummarizePage() {
         if (res.status === 401) return router.push("/login");
         if (!res.ok) throw new Error(await errorDetail(res, "Couldn't fetch the transcript"));
         const data = (await res.json()) as TranscriptOut;
-        text = data.transcript;
         videoId = data.video_id;
-        source = "api";
         setVideoTitle(data.title);
         setVideoDuration(data.duration);
-        if (data.truncated) {
-          toast.toast({ title: "Long video", description: "The transcript was truncated to fit the limit.", variant: "warn" });
+        if (data.needs_audio) {
+          // No captions — the worker downloads + transcribes the audio in the background.
+          source = "audio";
+          text = "";
+          toast.toast({ title: "No captions found", description: "Transcribing the audio — this can take a little longer.", variant: "accent" });
+        } else {
+          text = data.transcript;
+          source = "api";
+          if (data.truncated) {
+            toast.toast({ title: "Long video", description: "The transcript was truncated to fit the limit.", variant: "warn" });
+          }
         }
       } else {
         if (len < MIN_CHARS) return setError(`Paste at least ${MIN_CHARS} characters of transcript.`);
@@ -167,6 +183,8 @@ export default function SummarizePage() {
       window.dispatchEvent(new Event("usage:changed"));
       const final = await pollJob(job_id, setJob);
       setJob(final);
+      // Capture the resolved transcript (e.g. from audio ASR) for regenerate.
+      if (final.transcript) setSubmitted(final.transcript);
       toast.success("Summary ready", "Scroll down to read, copy, or download it.");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong";

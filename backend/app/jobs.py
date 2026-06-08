@@ -13,6 +13,7 @@ run its own worker; for prod, run one worker or use an external queue (E4 "Later
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import timedelta
 from uuid import uuid4
@@ -25,6 +26,7 @@ from .llm import RateLimited, RequestTooLarge, summarize_long as llm_summarize
 from .models import Job, JobStatus, PasswordResetCode, PendingSignup, Summary
 from .quota import open_breaker, record_tokens
 from .security import utcnow
+from .transcript import TranscriptError
 
 logger = logging.getLogger("app.jobs")
 
@@ -181,12 +183,48 @@ async def _run_job(job_id: str, fence: int) -> None:
         job = await session.get(Job, job_id)
         if job is None or job.lease_count != fence or job.lease_owner != WORKER_ID:
             return
-        transcript, tsha, lang, source, video_id = (
-            job.transcript, job.transcript_sha256, job.lang, job.source, job.video_id
-        )
+        transcript = job.transcript
+        tsha = job.transcript_sha256
+        lang, source, video_id = job.lang, job.source, job.video_id
         force = job.force
         light_types = [t for t in job.summary_types.split(",") if t]
         want_notes = job.complete_notes
+
+    # Audio job: no captions were available, so download + transcribe the audio
+    # now (slow — heartbeated). Then persist the resolved transcript + its hash so
+    # the content-bound cache and history work like any other job.
+    if source == "audio" and not transcript:
+        if not video_id:
+            await _fail(job_id, fence, "No video to transcribe.", permanent=True)
+            return
+        await _set_phase(job_id, fence, "transcribing")
+        from .audio import transcribe_audio  # lazy import avoids a circular import
+
+        try:
+            async with _Heartbeat(job_id, fence):
+                transcript = await transcribe_audio(video_id)
+        except TranscriptError as exc:
+            await _fail(job_id, fence, exc.detail, permanent=True)
+            return
+        except Exception:
+            logger.exception("audio transcription failed")
+            await _fail(job_id, fence, "Couldn't transcribe this video's audio.", permanent=True)
+            return
+        transcript = transcript.strip()[: settings.transcript_max_chars]
+        if len(transcript) < settings.transcript_min_chars:
+            await _fail(job_id, fence, "The audio produced too little text to summarize.", permanent=True)
+            return
+        tsha = hashlib.sha256(transcript.encode("utf-8")).hexdigest()
+        async with SessionLocal() as session:
+            await session.execute(
+                update(Job)
+                .where(Job.id == job_id, Job.lease_count == fence)
+                .values(transcript=transcript, transcript_sha256=tsha)
+            )
+            await session.commit()
+
+    # Which requested types are already cached for the (resolved) transcript hash?
+    async with SessionLocal() as session:
         existing = set(
             (
                 await session.execute(

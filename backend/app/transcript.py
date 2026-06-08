@@ -173,16 +173,22 @@ async def _fetch_managed(video_id: str) -> str:
     )
 
 
-async def fetch_transcript(video_id: str) -> str:
-    """Return the plain-text transcript for a video id, using the configured provider.
-    If no captions exist, fall back to downloading the audio and transcribing it."""
+async def fetch_captions(video_id: str) -> str:
+    """Captions ONLY — raises NoTranscript when the video has none. No audio
+    fallback, so it stays fast and is safe to call inside a request."""
     if settings.transcript_provider == "managed":
         return await _fetch_managed(video_id)
     # Default: direct caption fetch (good for local/residential IPs).
+    return await run_in_threadpool(_fetch_via_library, video_id)
+
+
+async def fetch_transcript(video_id: str) -> str:
+    """Captions, or audio transcription as a fallback when there are none. The
+    audio path is SLOW — callers that must stay responsive should call
+    fetch_captions() and defer transcribe_audio() to the background worker."""
     try:
-        return await run_in_threadpool(_fetch_via_library, video_id)
+        return await fetch_captions(video_id)
     except NoTranscript:
-        # No captions available -> download the audio and run speech-to-text.
         from .audio import transcribe_audio  # lazy import avoids a circular import
 
         return await transcribe_audio(video_id)

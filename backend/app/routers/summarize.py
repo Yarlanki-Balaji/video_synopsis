@@ -23,16 +23,22 @@ from ..llm import LIGHT_TYPES
 from ..models import DailyUsage, Job, JobStatus, Summary, User
 from ..quota import check_and_reserve
 from ..security import utcnow
-from ..transcript import TranscriptError, extract_video_id, fetch_metadata, fetch_transcript
+from ..transcript import (
+    NoTranscript,
+    TranscriptError,
+    extract_video_id,
+    fetch_captions,
+    fetch_metadata,
+)
 
 router = APIRouter(prefix="/api", tags=["summarize"])
 
 VALID_TYPES = set(LIGHT_TYPES)
-VALID_SOURCES = {"paste", "api", "extension"}
+VALID_SOURCES = {"paste", "api", "extension", "audio"}
 
 
 class SummarizeIn(BaseModel):
-    transcript_text: str
+    transcript_text: str = ""  # omitted for audio jobs (the worker transcribes)
     summary_types: list[str] = Field(default_factory=lambda: list(LIGHT_TYPES))
     complete_notes: bool = False
     video_id: str | None = None
@@ -57,6 +63,9 @@ class TranscriptOut(BaseModel):
     duration: int | None = None  # seconds (from YouTube Data API v3 if configured)
     transcript: str
     truncated: bool
+    # No captions found, but audio transcription is available: the client should
+    # submit an audio job (source="audio") and the worker will transcribe it.
+    needs_audio: bool = False
 
 
 def _sha256(text: str) -> str:
@@ -90,10 +99,21 @@ async def summarize(
     types = sorted({t for t in body.summary_types if t in VALID_TYPES})
     if not types and not body.complete_notes:
         raise HTTPException(422, "Pick at least one summary type.")
-    transcript = _validate_transcript(body.transcript_text)
-    tsha = _sha256(transcript)
     video_id = (body.video_id or "").strip()[:16] or None
     wanted = types + (["notes"] if body.complete_notes else [])
+
+    # Audio job: no captions were available, so the worker will download + transcribe
+    # the audio (slow). The transcript/hash are unknown until then, so we defer the
+    # cache check to the worker and key idempotency on the video id instead.
+    is_audio = body.source == "audio" and bool(video_id)
+    if is_audio:
+        transcript = ""
+        tsha = ""
+        idem_basis = f"audio:{video_id}"
+    else:
+        transcript = _validate_transcript(body.transcript_text)
+        tsha = _sha256(transcript)
+        idem_basis = tsha
 
     # Regenerate (force) is always a brand-new job: salt the idempotency key so
     # it doesn't short-circuit to a prior job. The worker (not this request)
@@ -101,7 +121,7 @@ async def summarize(
     # another user's completed result here.
     # Idempotency key (Part C): same user + content + options -> same job.
     salt = f"|force|{uuid4().hex}" if body.force else ""
-    idem = _sha256(f"{user.id}|{tsha}|{','.join(types)}|{int(body.complete_notes)}{salt}")
+    idem = _sha256(f"{user.id}|{idem_basis}|{','.join(types)}|{int(body.complete_notes)}{salt}")
     existing = (
         await session.execute(select(Job).where(Job.idempotency_key == idem))
     ).scalar_one_or_none()
@@ -120,20 +140,25 @@ async def summarize(
             await session.commit()
         return SummarizeOut(job_id=existing.id, status=existing.status)
 
-    # Content-bound cache (G4): is every requested type already generated?
-    cached = set(
-        (
-            await session.execute(
-                select(Summary.type).where(
-                    Summary.transcript_sha256 == tsha,
-                    Summary.lang == "en",
-                    Summary.type.in_(wanted),
+    # Content-bound cache (G4): is every requested type already generated? An
+    # audio job's transcript isn't known yet, so the worker checks the cache after
+    # transcribing — here it always runs.
+    if is_audio:
+        all_cached = False
+    else:
+        cached = set(
+            (
+                await session.execute(
+                    select(Summary.type).where(
+                        Summary.transcript_sha256 == tsha,
+                        Summary.lang == "en",
+                        Summary.type.in_(wanted),
+                    )
                 )
-            )
-        ).scalars().all()
-    )
-    # A forced regenerate must always run (and re-bill quota), even if cached.
-    all_cached = (not body.force) and all(t in cached for t in wanted)
+            ).scalars().all()
+        )
+        # A forced regenerate must always run (and re-bill quota), even if cached.
+        all_cached = (not body.force) and all(t in cached for t in wanted)
 
     # Quota + breaker only when real work is needed (cache hits are free).
     if not all_cached:
@@ -173,13 +198,24 @@ async def summarize(
 
 @router.post("/transcript", response_model=TranscriptOut)
 async def get_transcript(body: TranscriptIn, user: User = Depends(get_current_user)):
-    """Fetch a YouTube transcript by URL (M3). The client then sends the returned
-    text to POST /summarize. The fetch provider is chosen by settings."""
+    """Resolve a YouTube transcript by URL (M3) — CAPTIONS ONLY, so the request
+    stays fast. If the video has no captions but audio transcription is available,
+    return needs_audio=True; the client then submits an audio job and the worker
+    transcribes the audio in the background."""
     video_id = extract_video_id(body.url)
     if not video_id:
         raise HTTPException(422, "Enter a valid YouTube video URL.")
     try:
-        text = await fetch_transcript(video_id)
+        text = await fetch_captions(video_id)
+    except NoTranscript:
+        audio_ok = settings.audio_fallback_enabled and bool(settings.groq_api_key or settings.gemini_api_key)
+        if not audio_ok:
+            raise HTTPException(422, "This video has no captions available.")
+        title, duration = await fetch_metadata(video_id)
+        return TranscriptOut(
+            video_id=video_id, title=title, duration=duration,
+            transcript="", truncated=False, needs_audio=True,
+        )
     except TranscriptError as exc:
         raise HTTPException(exc.status, exc.detail)
     truncated = len(text) > settings.transcript_max_chars
@@ -257,6 +293,9 @@ async def get_job(
         "summaries": {},
     }
     if job.status == JobStatus.done.value:
+        # Expose the resolved transcript (e.g. from audio ASR) so the client can
+        # regenerate a type without re-transcribing.
+        out["transcript"] = job.transcript
         wanted = out["summary_types"] + (["notes"] if job.complete_notes else [])
         rows = (
             await session.execute(
