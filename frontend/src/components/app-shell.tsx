@@ -9,9 +9,14 @@ import { IconButton, Icons } from "./ui";
 import { ThemeToggle } from "./theme";
 
 const NAV = [
-  { href: "/summarize", label: "Summarize", icon: Icons.summarize },
   { href: "/history", label: "History", icon: Icons.history },
   { href: "/settings", label: "Settings", icon: Icons.settings },
+];
+
+const SUMMARIZE_SUBS = [
+  { href: "/summarize/url", label: "YouTube URL", icon: Icons.logo },
+  { href: "/summarize/upload", label: "Upload video", icon: Icons.upload },
+  { href: "/summarize/paste", label: "Paste transcript", icon: Icons.fileText },
 ];
 
 type Usage = { jobs_used: number; jobs_limit: number; jobs_remaining: number };
@@ -64,9 +69,61 @@ function UsageMeter() {
   );
 }
 
+function SummarizeNav({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+  const active = pathname.startsWith("/summarize");
+  const [open, setOpen] = useState(false);
+  // Expanded when toggled open OR while you're inside the Summarize section.
+  const expanded = open || active;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={expanded}
+        className={`relative flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors duration-150 ${
+          active ? "bg-accent-soft font-medium text-accent-text" : "text-muted hover:bg-surface-2 hover:text-fg"
+        }`}
+      >
+        {active && <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-accent" />}
+        <Icons.summarize className="h-[18px] w-[18px] shrink-0" />
+        <span className="flex-1 text-left">Summarize</span>
+        <Icons.chevronDown className={`h-4 w-4 shrink-0 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
+      </button>
+
+      {/* Slide-down sub-options (grid-rows trick animates height: auto). */}
+      <div className={`grid transition-all duration-200 ease-out ${expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+        <div className="overflow-hidden">
+          <div className="mt-0.5 flex flex-col gap-0.5 pl-3">
+            {SUMMARIZE_SUBS.map((s) => {
+              const I = s.icon;
+              const subActive = pathname === s.href;
+              return (
+                <Link
+                  key={s.href}
+                  href={s.href}
+                  onClick={onNavigate}
+                  aria-current={subActive ? "page" : undefined}
+                  className={`flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-[13px] transition-colors ${
+                    subActive ? "bg-surface-2 font-medium text-fg" : "text-muted hover:bg-surface-2 hover:text-fg"
+                  }`}
+                >
+                  <I className="h-4 w-4 shrink-0" />
+                  {s.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NavLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
   return (
     <nav className="flex flex-col gap-1">
+      <SummarizeNav pathname={pathname} onNavigate={onNavigate} />
       {NAV.map((n) => {
         const active = pathname.startsWith(n.href);
         const I = n.icon;
@@ -150,7 +207,9 @@ export function AppShell({ children, email }: { children: React.ReactNode; email
   const pathname = usePathname();
   const router = useRouter();
   const [drawer, setDrawer] = useState(false);
-  const title = NAV.find((n) => pathname.startsWith(n.href))?.label ?? "Video Synopsis";
+  const title = pathname.startsWith("/summarize")
+    ? "Summarize"
+    : NAV.find((n) => pathname.startsWith(n.href))?.label ?? "Video Synopsis";
 
   async function logout() {
     try {
