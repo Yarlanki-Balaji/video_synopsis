@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # MUST be overridden in production (startup refuses the default there).
     jwt_secret: str = "dev-insecure-secret-change-me"
     jwt_algorithm: str = "HS256"
-    access_token_ttl_minutes: int = 30
+    access_token_ttl_minutes: int = 1440   # 24h — effective auto-logout (no client refresh)
     refresh_token_ttl_days: int = 7
     password_reset_ttl_minutes: int = 60
     # Email-verification OTP (signup).
