@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import uuid
 from typing import Any
 
 import httpx
@@ -38,9 +39,12 @@ def _headers(user_id: str) -> dict:
     return {
         "Authorization": f"Bearer {settings.hermes_api_key or ''}",
         "Content-Type": "application/json",
-        # STABLE per user — scopes the user's work (and Hermes-side memory if adopted later).
+        # Session-Key scopes per-user memory (stable per user).
         "X-Hermes-Session-Key": f"{settings.hermes_namespace}:user:{user_id}",
-        "X-Hermes-Session-Id": f"{settings.hermes_namespace}:{user_id}:work",
+        # Session-Id threads the conversation. These are ONE-SHOT calls (quiz/assess/summary),
+        # so use a UNIQUE id per request — a stable id made Hermes replay the whole prior
+        # session each call, dragging old transcripts in and blowing up the token count.
+        "X-Hermes-Session-Id": f"{settings.hermes_namespace}:{user_id}:{uuid.uuid4().hex}",
     }
 
 
