@@ -82,12 +82,18 @@ async def _save_profile(session: AsyncSession, user_id: str,
     await session.commit()
 
 
+# Cap the transcript sent to the agent. A few-question quiz / level-adapted summary
+# needs a representative chunk, not a whole 100k+ token transcript — sending the full
+# thing blows past Gemini's free-tier input-token-per-minute limit. ~24k chars ≈ 6k tokens.
+_AGENT_MAX_TRANSCRIPT_CHARS = 24000
+
+
 def _check_transcript(text: str) -> str:
     t = (text or "").strip()
     if len(t) < settings.transcript_min_chars:
         raise HTTPException(422, "Transcript is too short.")
-    if len(t) > settings.transcript_max_chars:
-        raise HTTPException(422, f"Transcript exceeds {settings.transcript_max_chars} characters.")
+    if len(t) > _AGENT_MAX_TRANSCRIPT_CHARS:
+        t = t[:_AGENT_MAX_TRANSCRIPT_CHARS] + "\n\n[transcript truncated for the quiz]"
     return t
 
 

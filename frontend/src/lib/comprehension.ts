@@ -50,3 +50,16 @@ export function fetchAdaptiveSummary(transcript: string, summaryType = "detailed
     "Could not generate the summary",
   );
 }
+
+/** Build the content to quiz on from a job's summaries (most-informative first).
+ *  Summaries are short, so this stays well under the model's token budget. */
+const SUMMARY_ORDER = ["detailed", "notes", "chapters", "bullets", "eli5", "brief", "mindmap"];
+export function summaryContent(summaries?: Record<string, string>): string {
+  if (!summaries) return "";
+  const keys = Object.keys(summaries);
+  const ordered = [
+    ...SUMMARY_ORDER.filter((k) => summaries[k]),
+    ...keys.filter((k) => !SUMMARY_ORDER.includes(k)),
+  ];
+  return ordered.map((k) => summaries[k]).filter(Boolean).join("\n\n");
+}

@@ -11,6 +11,7 @@ import { ConfirmDialog } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { downloadText, jobToMarkdown, orderedKeys } from "@/lib/summaries";
 import { TestUnderstandingButton } from "@/components/test-understanding-button";
+import { summaryContent } from "@/lib/comprehension";
 
 type JobView = {
   status: string;
@@ -103,7 +104,7 @@ export default function JobPage() {
         </Link>
         {done && keys.length > 0 && (
           <div className="flex items-center gap-2">
-            <TestUnderstandingButton transcript={job?.transcript} />
+            <TestUnderstandingButton transcript={summaryContent(job?.summaries)} />
             <Button variant="outline" size="sm" onClick={() => downloadText("video-summary.md", markdown())}>
               <Icons.download className="h-4 w-4" /> Download
             </Button>
