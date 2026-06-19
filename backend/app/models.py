@@ -208,3 +208,22 @@ class ServiceState(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     breaker_open_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+# --- Hermes agent: per-user comprehension features -------------------------
+
+class ComprehensionProfile(Base):
+    """Per-user comprehension profile — the adaptive 'memory' that tailors summaries
+    to how well a user understands a topic. Created/updated by the assess step
+    (POST /api/comprehension/assess). JSON values are stored as TEXT for SQLite +
+    Postgres portability."""
+
+    __tablename__ = "comprehension_profiles"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    reading_level: Mapped[str] = mapped_column(String(16), default="general")  # general|beginner|advanced
+    style_notes: Mapped[str] = mapped_column(Text, default="[]")               # JSON array of strings
+    understanding_history: Mapped[str] = mapped_column(Text, default="[]")     # JSON array of recent scores
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from .config import settings
 from .db import init_models
 from .jobs import start_worker, stop_worker
-from .routers import auth, health, summarize
+from .routers import auth, comprehension, health, summarize
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 
@@ -80,6 +80,7 @@ async def csrf_origin_guard(request: Request, call_next):
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(summarize.router)
+app.include_router(comprehension.router)
 
 
 @app.get("/")
