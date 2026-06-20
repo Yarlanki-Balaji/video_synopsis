@@ -11,6 +11,7 @@ same JWT dependency as the rest of the API.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,7 +22,7 @@ from .. import agent_client
 from ..config import settings
 from ..db import get_session
 from ..deps import get_current_user
-from ..models import ComprehensionProfile, User
+from ..models import ComprehensionProfile, PersonalizedSummaryCache, User
 
 router = APIRouter(prefix="/api/comprehension", tags=["comprehension"])
 
@@ -97,9 +98,43 @@ def _check_transcript(text: str) -> str:
     return t
 
 
+# --- Personalized-summary cache: generate once per (user, content), reuse on re-view.
+def _content_hash(*parts: str) -> str:
+    return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
+
+
+def _profile_sig(profile: dict) -> str:
+    """Hash of the style-relevant profile fields — changes when the user's prefs change,
+    which invalidates (regenerates) the cached personalized summary."""
+    key = json.dumps(
+        {
+            "reading_level": profile.get("reading_level", ""),
+            "style_notes": sorted(str(s) for s in (profile.get("style_notes") or [])),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+async def _load_cached_summary(session: AsyncSession, user_id: str, chash: str, psig: str) -> str | None:
+    row = await session.get(PersonalizedSummaryCache, (user_id, chash))
+    return row.summary if (row is not None and row.profile_sig == psig) else None
+
+
+async def _save_cached_summary(session: AsyncSession, user_id: str, chash: str, psig: str, summary: str) -> None:
+    row = await session.get(PersonalizedSummaryCache, (user_id, chash))
+    if row is None:
+        session.add(PersonalizedSummaryCache(user_id=user_id, content_hash=chash, profile_sig=psig, summary=summary))
+    else:
+        row.profile_sig = psig
+        row.summary = summary
+    await session.commit()
+
+
 class SummaryIn(BaseModel):
     transcript: str
     summary_type: str = "detailed"
+    force: bool = False  # bypass the cache + regenerate
 
 
 class QuizIn(BaseModel):
@@ -130,11 +165,18 @@ async def make_adaptive_summary(
     _ensure_enabled()
     transcript = _check_transcript(body.transcript)
     _, profile = await _load_profile(session, user.id)
+    chash = _content_hash(body.summary_type, transcript)
+    psig = _profile_sig(profile)
+    if not body.force:
+        cached = await _load_cached_summary(session, user.id, chash, psig)
+        if cached is not None:
+            return {"summary": cached, "profile_used": profile, "cached": True}
     try:
         summary = await agent_client.adaptive_summary(user.id, transcript, profile, body.summary_type)
     except agent_client.AgentError as exc:
         raise HTTPException(502, f"Agent error: {exc}")
-    return {"summary": summary, "profile_used": profile}
+    await _save_cached_summary(session, user.id, chash, psig, summary)
+    return {"summary": summary, "profile_used": profile, "cached": False}
 
 
 @router.post("/quiz")

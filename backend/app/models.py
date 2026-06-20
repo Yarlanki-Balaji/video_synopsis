@@ -227,3 +227,20 @@ class ComprehensionProfile(Base):
     style_notes: Mapped[str] = mapped_column(Text, default="[]")               # JSON array of strings
     understanding_history: Mapped[str] = mapped_column(Text, default="[]")     # JSON array of recent scores
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class PersonalizedSummaryCache(Base):
+    """Caches the per-user 'Personalized for you' summary so it's generated ONCE per
+    (user, content) instead of on every page view. `profile_sig` is a hash of the user's
+    style-relevant profile fields — a mismatch means the profile changed since caching,
+    so the entry is treated as stale and regenerated."""
+
+    __tablename__ = "personalized_summaries"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    content_hash: Mapped[str] = mapped_column(String(64), primary_key=True)  # sha256 of input content
+    profile_sig: Mapped[str] = mapped_column(String(64))                     # sha256 of profile style fields
+    summary: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

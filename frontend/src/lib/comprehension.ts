@@ -18,10 +18,22 @@ export type AssessResponse = {
   updated_profile: { reading_level: string; style_notes: string[]; understanding_history: number[] };
   notes: string;
 };
-export type AdaptiveSummaryResponse = { summary: string; profile_used: unknown };
+export type AdaptiveSummaryResponse = { summary: string; profile_used: unknown; cached?: boolean };
+export type ComprehensionProfile = {
+  reading_level: string;
+  style_notes: string[];
+  understanding_history: number[];
+};
 
 async function post<T>(path: string, body: unknown, fallback: string): Promise<T> {
   const res = await api(path, { method: "POST", body: JSON.stringify(body) });
+  if (res.status === 401) throw new Error("UNAUTHORIZED");
+  if (!res.ok) throw new Error(await errorDetail(res, fallback));
+  return (await res.json()) as T;
+}
+
+async function get<T>(path: string, fallback: string): Promise<T> {
+  const res = await api(path);
   if (res.status === 401) throw new Error("UNAUTHORIZED");
   if (!res.ok) throw new Error(await errorDetail(res, fallback));
   return (await res.json()) as T;
@@ -43,10 +55,10 @@ export function submitAssessment(transcript: string, answers: Answer[]) {
   );
 }
 
-export function fetchAdaptiveSummary(transcript: string, summaryType = "detailed") {
+export function fetchAdaptiveSummary(content: string, summaryType = "detailed", force = false) {
   return post<AdaptiveSummaryResponse>(
     "/api/comprehension/summary",
-    { transcript, summary_type: summaryType },
+    { transcript: content, summary_type: summaryType, force },
     "Could not generate the summary",
   );
 }
@@ -62,4 +74,14 @@ export function summaryContent(summaries?: Record<string, string>): string {
     ...keys.filter((k) => !SUMMARY_ORDER.includes(k)),
   ];
   return ordered.map((k) => summaries[k]).filter(Boolean).join("\n\n");
+}
+
+export function fetchProfile(): Promise<ComprehensionProfile> {
+  return get<ComprehensionProfile>("/api/comprehension/profile", "Could not load your profile");
+}
+
+/** True when the user has saved style/level preferences worth personalizing for.
+ *  A fresh user gets the backend DEFAULT_PROFILE (general + empty) -> false -> no card. */
+export function hasStylePreferences(p: ComprehensionProfile): boolean {
+  return (p.style_notes?.length ?? 0) > 0 || (!!p.reading_level && p.reading_level !== "general");
 }

@@ -10,6 +10,7 @@ import { useToast } from "@/components/toast";
 import { SUMMARY_TYPES, NOTES_DEF, downloadText, jobToMarkdown, labelFor, orderedKeys } from "@/lib/summaries";
 import { TestUnderstandingButton } from "@/components/test-understanding-button";
 import { summaryContent } from "@/lib/comprehension";
+import { PersonalizedSummary } from "@/components/personalized-summary";
 
 const MIN_CHARS = 50;
 const MAX_CHARS = 200_000;
@@ -467,6 +468,7 @@ export function Workbench({ mode }: { mode: Mode }) {
               </Button>
             </div>
           </div>
+          <PersonalizedSummary summaries={job?.summaries} />
           {keys.map((t) =>
             job?.summaries[t] ? (
               <SummaryCard key={t} type={t} content={job.summaries[t]} onRegenerate={regenerate} regenerating={regen === t} />

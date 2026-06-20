@@ -127,6 +127,9 @@ workbench). It opens a modal: load quiz → answer → submit → score + per-qu
 - `frontend/src/lib/comprehension.ts` — typed client over `api()`
 - `frontend/src/components/comprehension-quiz.tsx` — the modal state machine
 - `frontend/src/components/test-understanding-button.tsx` — the trigger
+- `frontend/src/components/personalized-summary.tsx` — auto **"Personalized for you"** card: a
+  story-style adaptive summary shown above the normal cards when the user has style preferences
+  (renders nothing otherwise). Dedupes its Hermes call against the page's 1.5s poll via a ref.
 Calls go through the existing `/api/*` Next.js proxy, so cookie auth + the CSRF Origin check
 work without extra config.
 
@@ -141,13 +144,23 @@ work without extra config.
 - **Metering:** these calls hit Gemini and bypass your job quota — add
   `quota.check_and_reserve` in the router if you want them counted.
 
-## Optional: let Hermes create its own skills (from user answers)
-Currently OFF (recommended until the feature is in real use). To enable Hermes'
-self-improvement loop so it proposes new/updated skills from real usage:
-- Keep the `memory` toolset on, allow skill writes, and set `skills.write_approval: true`.
-- Hermes then **stages** proposed skills; review with `hermes skills` / `/skills pending` and
-  approve the good ones.
-- These skills are **global** (shared across users) — per-user adaptation stays in your DB.
+## Hermes skills + self-improvement (ENABLED)
+The sidecar runs `gemini-2.5-flash` with the `skills` toolset ON and `skills.write_approval: true`,
+so Hermes **loads and follows** the installed `adaptive-video-summary` skill when it writes the
+"Personalized for you" card and the adaptive summary.
+- **Skill vs. profile:** the SKILL is **global** (the reusable "adapt to a reader" procedure); the
+  per-user STYLE lives in your DB `comprehension_profile` (`style_notes`). Hermes follows the skill;
+  the profile personalizes it. A per-user skill is not possible — skills are shared profile-wide.
+- **Self-improvement is staged, not automatic.** `write_approval` means any proposed skill change is
+  **staged** for approval, never auto-applied. But Hermes' background skill-review effectively never
+  fires for these endpoints — each call uses a **unique `X-Hermes-Session-Id`** (one-shot, stateless,
+  the fix for the earlier token blow-up), so there's no multi-turn session for the curator to review.
+  To actually evolve the skill, do it deliberately: run an interactive `hermes` CLI session, or
+  hand-edit `~/.hermes/skills/adaptive-video-summary/SKILL.md`. Review/approve any staged proposals
+  with `hermes skills` / `/skills pending`.
+- **Rate limit:** `gemini-2.5-flash` free tier allows ~20 requests/min. The auto card adds one Gemini
+  call per summary view (only for users with style prefs). For heavy use, cache it or move the sidecar
+  to a paid tier. (`flash-lite` has higher RPM but mishandles the skills toolset — don't pair them.)
 
 ## Notes
 - If `HERMES_ENABLED=false`, the `/summary`, `/quiz`, `/assess` endpoints return

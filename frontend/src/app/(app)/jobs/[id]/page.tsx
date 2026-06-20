@@ -12,6 +12,7 @@ import { useToast } from "@/components/toast";
 import { downloadText, jobToMarkdown, orderedKeys } from "@/lib/summaries";
 import { TestUnderstandingButton } from "@/components/test-understanding-button";
 import { summaryContent } from "@/lib/comprehension";
+import { PersonalizedSummary } from "@/components/personalized-summary";
 
 type JobView = {
   status: string;
@@ -138,6 +139,7 @@ export default function JobPage() {
         </Card>
       )}
 
+      {done && <PersonalizedSummary summaries={job?.summaries} />}
       {done && keys.map((t) => (job.summaries[t] ? <SummaryCard key={t} type={t} content={job.summaries[t]} /> : null))}
 
       <ConfirmDialog
