@@ -226,6 +226,9 @@ class ComprehensionProfile(Base):
     reading_level: Mapped[str] = mapped_column(String(16), default="general")  # general|beginner|advanced
     style_notes: Mapped[str] = mapped_column(Text, default="[]")               # JSON array of strings
     understanding_history: Mapped[str] = mapped_column(Text, default="[]")     # JSON array of recent scores
+    # Structured style preferences: JSON dict of style value -> weight. Driven by the
+    # direct style controls (decayed + mixed); complements the free-text style_notes.
+    style_scores: Mapped[str] = mapped_column(Text, default="{}")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 

@@ -76,7 +76,7 @@ export function ComprehensionQuiz({
   }, [transcript, handleError]);
 
   useEffect(() => {
-    if (open) loadQuiz();
+    if (open) void (async () => { await loadQuiz(); })();
   }, [open, loadQuiz]);
 
   // Regenerate the summary adapted to the user's level (auto after submit, or manual retry).

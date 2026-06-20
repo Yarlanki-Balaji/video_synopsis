@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import agent_client
+from .. import agent_client, style_prefs
 from ..config import settings
 from ..db import get_session
 from ..deps import get_current_user
@@ -26,7 +26,10 @@ from ..models import ComprehensionProfile, PersonalizedSummaryCache, User
 
 router = APIRouter(prefix="/api/comprehension", tags=["comprehension"])
 
-DEFAULT_PROFILE = {"reading_level": "general", "style_notes": [], "understanding_history": []}
+DEFAULT_PROFILE = {
+    "reading_level": "general", "style_notes": [], "understanding_history": [],
+    "style_scores": {}, "style_emphasis": [],
+}
 READING_LEVELS = {"general", "beginner", "advanced"}
 UNDERSTANDING_LEVELS = {"low", "medium", "high"}
 
@@ -59,10 +62,14 @@ async def _load_profile(session: AsyncSession, user_id: str) -> tuple[Comprehens
     row = await session.get(ComprehensionProfile, user_id)
     if row is None:
         return None, dict(DEFAULT_PROFILE)
+    scores = style_prefs.normalize(getattr(row, "style_scores", None) or "{}")
     return row, {
         "reading_level": row.reading_level,
         "style_notes": json.loads(row.style_notes or "[]"),
         "understanding_history": json.loads(row.understanding_history or "[]"),
+        "style_scores": scores,
+        # Ranked style instructions (top + a blended 2nd) the agent should honor.
+        "style_emphasis": style_prefs.emphasis_phrases(scores),
     }
 
 
@@ -71,15 +78,25 @@ async def _save_profile(session: AsyncSession, user_id: str,
     reading_level = _normalize_reading_level(profile.get("reading_level"))
     style_notes = json.dumps([str(s) for s in (profile.get("style_notes") or [])][:20])
     history = json.dumps(_coerce_scores(profile.get("understanding_history"))[-20:])
+    # style_scores: use the explicit value when provided (style controls), else
+    # preserve whatever's already stored (e.g. the assess step doesn't touch it).
+    if "style_scores" in profile:
+        style_scores = json.dumps(style_prefs.normalize(profile.get("style_scores")))
+    elif row is not None:
+        style_scores = getattr(row, "style_scores", None) or "{}"
+    else:
+        style_scores = "{}"
     if row is None:
         session.add(ComprehensionProfile(
             user_id=user_id, reading_level=reading_level,
             style_notes=style_notes, understanding_history=history,
+            style_scores=style_scores,
         ))
     else:
         row.reading_level = reading_level
         row.style_notes = style_notes
         row.understanding_history = history
+        row.style_scores = style_scores
     await session.commit()
 
 
@@ -110,6 +127,7 @@ def _profile_sig(profile: dict) -> str:
         {
             "reading_level": profile.get("reading_level", ""),
             "style_notes": sorted(str(s) for s in (profile.get("style_notes") or [])),
+            "style_scores": style_prefs.sig(profile.get("style_scores") or {}),
         },
         sort_keys=True,
     )
@@ -145,6 +163,12 @@ class QuizIn(BaseModel):
 class AssessIn(BaseModel):
     transcript: str
     answers: list[dict]  # [{"question": "...", "type": "comprehension"|"feedback", "answer": "..."}]
+
+
+class StyleIn(BaseModel):
+    value: str | None = None              # a style key from style_prefs.TAXONOMY
+    delta: float = style_prefs.BUMP       # how hard to nudge it
+    note: str | None = None               # optional free-text preference
 
 
 @router.get("/profile")
@@ -212,3 +236,37 @@ async def assess(
     if isinstance(updated, dict):
         await _save_profile(session, user.id, row, updated)  # persist the adaptation
     return result
+
+
+@router.get("/style/options")
+async def style_options(user: User = Depends(get_current_user)):
+    """The selectable styles for the direct-control chips."""
+    return {"options": style_prefs.options()}
+
+
+@router.post("/style")
+async def set_style(
+    body: StyleIn,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Directly nudge the user's style (no quiz needed). Bumps the chosen style
+    (decaying the rest so it can blend/shift) and/or adds a free-text note, then
+    persists. The personalized summary regenerates because the profile changed."""
+    row, profile = await _load_profile(session, user.id)
+    changed = False
+    if body.value:
+        if not style_prefs.valid_value(body.value):
+            raise HTTPException(422, f"Unknown style: {body.value}")
+        profile["style_scores"] = style_prefs.bump(
+            profile.get("style_scores") or {}, body.value, body.delta
+        )
+        changed = True
+    if body.note and body.note.strip():
+        profile["style_notes"] = list(profile.get("style_notes") or []) + [body.note.strip()]
+        changed = True
+    if not changed:
+        raise HTTPException(422, "Provide a style 'value' or a 'note'.")
+    await _save_profile(session, user.id, row, profile)
+    _, fresh = await _load_profile(session, user.id)
+    return {"ok": True, "profile": fresh}

@@ -23,6 +23,8 @@ export type ComprehensionProfile = {
   reading_level: string;
   style_notes: string[];
   understanding_history: number[];
+  style_scores?: Record<string, number>;
+  style_emphasis?: string[];
 };
 
 async function post<T>(path: string, body: unknown, fallback: string): Promise<T> {
@@ -80,8 +82,22 @@ export function fetchProfile(): Promise<ComprehensionProfile> {
   return get<ComprehensionProfile>("/api/comprehension/profile", "Could not load your profile");
 }
 
+/** Directly nudge the user's style (no quiz needed): bump a style value and/or
+ *  add a free-text note. Returns the updated profile. */
+export function setStyle(value?: string, note?: string) {
+  return post<{ ok: boolean; profile: ComprehensionProfile }>(
+    "/api/comprehension/style",
+    { value, note },
+    "Could not update your style",
+  );
+}
+
 /** True when the user has saved style/level preferences worth personalizing for.
  *  A fresh user gets the backend DEFAULT_PROFILE (general + empty) -> false -> no card. */
 export function hasStylePreferences(p: ComprehensionProfile): boolean {
-  return (p.style_notes?.length ?? 0) > 0 || (!!p.reading_level && p.reading_level !== "general");
+  return (
+    (p.style_notes?.length ?? 0) > 0 ||
+    (p.style_emphasis?.length ?? 0) > 0 ||
+    (!!p.reading_level && p.reading_level !== "general")
+  );
 }
