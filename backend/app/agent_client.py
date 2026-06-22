@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -35,34 +37,38 @@ def _looks_rate_limited(text: str) -> bool:
     return "api call failed" in t and any(s in t for s in _RATE_LIMIT_SIGNS)
 
 
-def _headers(user_id: str) -> dict:
+def _base_headers(user_id: str) -> dict:
     return {
         "Authorization": f"Bearer {settings.hermes_api_key or ''}",
         "Content-Type": "application/json",
-        # Session-Key scopes per-user memory (stable per user).
+        # Session-Key scopes per-user long-term memory (stable per user).
         "X-Hermes-Session-Key": f"{settings.hermes_namespace}:user:{user_id}",
-        # Session-Id threads the conversation. These are ONE-SHOT calls (quiz/assess/summary),
-        # so use a UNIQUE id per request — a stable id made Hermes replay the whole prior
-        # session each call, dragging old transcripts in and blowing up the token count.
-        "X-Hermes-Session-Id": f"{settings.hermes_namespace}:{user_id}:{uuid.uuid4().hex}",
     }
 
 
-async def _chat(user_id: str, system: str, user: str) -> str:
-    payload = {
-        "model": settings.hermes_model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "stream": False,
-    }
+def _headers_oneshot(user_id: str) -> dict:
+    """UNIQUE session id per request -> stateless one-shot (quiz/assess/summary cache).
+    Each call is isolated, so no prior history is replayed (keeps these small + reliable)."""
+    h = _base_headers(user_id)
+    h["X-Hermes-Session-Id"] = f"{settings.hermes_namespace}:{user_id}:{uuid.uuid4().hex}"
+    return h
+
+
+def _headers_stateful(user_id: str) -> dict:
+    """STABLE session id per user -> the Hermes server maintains the conversation across
+    turns, so its turn counters accumulate and the self-improvement review fires (writing
+    skills + MEMORY.md/USER.md). Used by the learning-agent conversation."""
+    h = _base_headers(user_id)
+    h["X-Hermes-Session-Id"] = f"{settings.hermes_namespace}:{user_id}:agent"
+    return h
+
+
+async def _post_chat(messages: list[dict], headers: dict) -> str:
+    payload = {"model": settings.hermes_model, "messages": messages, "stream": False}
     try:
         async with httpx.AsyncClient(timeout=settings.hermes_timeout_seconds) as client:
             resp = await client.post(
-                f"{settings.hermes_base_url}/chat/completions",
-                headers=_headers(user_id),
-                json=payload,
+                f"{settings.hermes_base_url}/chat/completions", headers=headers, json=payload,
             )
     except httpx.HTTPError as exc:
         raise AgentError(f"Hermes request failed: {exc}") from exc
@@ -82,6 +88,14 @@ async def _chat(user_id: str, system: str, user: str) -> str:
     if not content.strip():
         raise AgentError("The model returned an empty response; please try again.")
     return content
+
+
+async def _chat(user_id: str, system: str, user: str) -> str:
+    """One-shot, stateless (unique session): backs the quiz / assess / summary calls."""
+    return await _post_chat(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        _headers_oneshot(user_id),
+    )
 
 
 def _parse_json(text: str) -> Any:
@@ -189,3 +203,93 @@ async def assess_and_adapt(user_id: str, transcript: str,
         "never include transcripts or answers."
     )
     return await _chat_json(user_id, system, user)
+
+
+# --- Stateful "learning agent" session — the genuine self-improving Hermes loop ----
+# Unlike the one-shot calls above, this uses a STABLE session id so the Hermes server
+# maintains the conversation. As turns accumulate, Hermes' background review fires and
+# writes per-user memory (MEMORY.md/USER.md) + skills (SKILL.md) on its own.
+
+_PERSONA = (
+    "You are my personal video-learning assistant. Across our conversation you summarize "
+    "videos for ME, learn MY preferences and corrections, and adapt to them. Persist what "
+    "you learn about me to memory, and when I teach you a reusable summarization procedure, "
+    "save it as a skill. Keep replies concise, in GitHub-flavored markdown. Acknowledge "
+    "briefly and wait for my first video."
+)
+_SEEDED: set[str] = set()
+# Skill names present when a user's session starts, so read_state() can highlight the
+# skills Hermes WRITES during the session (vs the pre-existing bundled/seed ones).
+_SKILL_BASELINE: dict[str, set[str]] = {}
+
+
+async def ensure_session(user_id: str) -> None:
+    """Seed the persona once per user (per process) as the opening turn of their stable
+    session, so it stays in the server-maintained history for later turns. Also snapshots
+    the current skills so we can show what the agent newly writes."""
+    if user_id in _SEEDED:
+        return
+    _SEEDED.add(user_id)
+    try:
+        _SKILL_BASELINE[user_id] = {s["name"] for s in await _fetch_skills(user_id) if s.get("name")}
+        await _post_chat([{"role": "user", "content": _PERSONA}], _headers_stateful(user_id))
+    except AgentError:
+        _SEEDED.discard(user_id)  # allow a retry on the next request
+        raise
+
+
+async def agent_turn(user_id: str, message: str) -> str:
+    """One turn in the user's STABLE learning-agent session. Sends only the new message;
+    the Hermes server loads + persists the conversation, so the turn counters climb and the
+    background self-improvement review eventually fires."""
+    return await _post_chat([{"role": "user", "content": message}], _headers_stateful(user_id))
+
+
+def _hermes_home() -> Path:
+    base = settings.hermes_home or os.environ.get("HERMES_HOME")
+    if base:
+        return Path(base)
+    if os.name == "nt":
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "hermes"
+    return Path.home() / ".hermes"
+
+
+def _read_md(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+async def _fetch_skills(user_id: str) -> list[dict]:
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{settings.hermes_base_url}/skills", headers=_base_headers(user_id)
+            )
+        if resp.status_code < 400:
+            return [
+                {"name": s.get("name"), "description": s.get("description")}
+                for s in (resp.json().get("data") or [])
+                if isinstance(s, dict) and s.get("name")
+            ]
+    except (httpx.HTTPError, ValueError):
+        pass
+    return []
+
+
+async def read_state(user_id: str) -> dict:
+    """What the agent has learned so far: built-in memory files + installed skills, with the
+    skills WRITTEN this session highlighted (new_skills). (Same-host: reads the sidecar's
+    memories dir; a remote sidecar should read via API instead.)"""
+    mem_dir = _hermes_home() / "memories"
+    skills = await _fetch_skills(user_id)
+    names = {s["name"] for s in skills}
+    baseline = _SKILL_BASELINE.get(user_id)
+    new_skills = sorted(names - baseline) if baseline is not None else []
+    return {
+        "memory": _read_md(mem_dir / "MEMORY.md"),
+        "user_profile": _read_md(mem_dir / "USER.md"),
+        "skills": skills,
+        "new_skills": new_skills,
+    }

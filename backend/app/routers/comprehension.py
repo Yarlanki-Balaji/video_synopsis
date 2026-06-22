@@ -171,6 +171,10 @@ class StyleIn(BaseModel):
     note: str | None = None               # optional free-text preference
 
 
+class AgentIn(BaseModel):
+    message: str = Field(..., min_length=1, max_length=8000)
+
+
 @router.get("/profile")
 async def get_profile(
     user: User = Depends(get_current_user),
@@ -270,3 +274,33 @@ async def set_style(
     await _save_profile(session, user.id, row, profile)
     _, fresh = await _load_profile(session, user.id)
     return {"ok": True, "profile": fresh}
+
+
+# --- Stateful learning agent: the genuine self-improving Hermes loop ----------------
+# Unlike the one-shot endpoints above, /agent threads a STABLE per-user Hermes session,
+# so as turns accumulate Hermes writes its OWN memory (MEMORY.md/USER.md) and skills
+# (SKILL.md). Memory here is Hermes-owned (single shared profile = fine for single-user;
+# multi-user would need Honcho). No DB writes.
+
+@router.post("/agent")
+async def agent_message(
+    body: AgentIn,
+    user: User = Depends(get_current_user),
+):
+    _ensure_enabled()
+    try:
+        await agent_client.ensure_session(user.id)
+        reply = await agent_client.agent_turn(user.id, body.message)
+    except agent_client.AgentError as exc:
+        raise HTTPException(502, f"Agent error: {exc}")
+    return {"reply": reply}
+
+
+@router.get("/agent/state")
+async def agent_state(user: User = Depends(get_current_user)):
+    """What the agent has learned so far (memory + skills) — watch the loop write live."""
+    _ensure_enabled()
+    try:
+        return await agent_client.read_state(user.id)
+    except agent_client.AgentError as exc:
+        raise HTTPException(502, f"Agent error: {exc}")

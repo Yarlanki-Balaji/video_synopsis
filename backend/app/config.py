@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     hermes_model: str = "hermes-agent"
     hermes_namespace: str = "vsai"
     hermes_timeout_seconds: int = 120
+    # Where the sidecar's HERMES_HOME is, so the backend can read the memory files it
+    # writes (same-host demo). Empty -> use HERMES_HOME env / the platform default.
+    hermes_home: str | None = None
 
     @property
     def gemini_keys(self) -> list[str]:

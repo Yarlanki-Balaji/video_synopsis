@@ -101,3 +101,23 @@ export function hasStylePreferences(p: ComprehensionProfile): boolean {
     (!!p.reading_level && p.reading_level !== "general")
   );
 }
+
+// --- Stateful learning agent (the self-improving Hermes loop) ---
+export type AgentStateResponse = {
+  memory: string;
+  user_profile: string;
+  skills: { name: string; description?: string }[];
+  new_skills?: string[]; // skills Hermes wrote during this session
+};
+
+export function sendAgentMessage(message: string) {
+  return post<{ reply: string }>(
+    "/api/comprehension/agent",
+    { message },
+    "The agent could not respond",
+  );
+}
+
+export function fetchAgentState() {
+  return get<AgentStateResponse>("/api/comprehension/agent/state", "Could not load agent state");
+}

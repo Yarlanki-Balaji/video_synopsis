@@ -10,6 +10,7 @@ import { ThemeToggle } from "./theme";
 
 const NAV = [
   { href: "/history", label: "History", icon: Icons.history },
+  { href: "/agent", label: "Learning agent", icon: Icons.sparkles },
   { href: "/settings", label: "Settings", icon: Icons.settings },
 ];
 
