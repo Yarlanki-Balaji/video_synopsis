@@ -18,6 +18,7 @@ function clean(md: string): string {
  * dark node text stays readable in both themes.
  */
 export function MindMap({ markdown }: { markdown: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
@@ -29,9 +30,19 @@ export function MindMap({ markdown }: { markdown: string }) {
         import("markmap-view"),
       ]);
       if (cancelled || !svgRef.current) return;
+      // markmap's autoFit reads the SVG's width/height as SVGLength values. A relative
+      // CSS width (w-full = 100%) makes that throw "Could not resolve relative length",
+      // so give the SVG ABSOLUTE pixel attributes first; CSS still scales the display.
+      const w = Math.max(320, containerRef.current?.clientWidth || 800);
+      svgRef.current.setAttribute("width", String(w));
+      svgRef.current.setAttribute("height", "460");
       const { root } = new Transformer().transform(clean(markdown) || "# (empty)");
       svgRef.current.innerHTML = "";
-      mm = Markmap.create(svgRef.current, { autoFit: true, duration: 300, paddingX: 16 }, root);
+      try {
+        mm = Markmap.create(svgRef.current, { autoFit: true, duration: 300, paddingX: 16 }, root);
+      } catch {
+        // Defensive: a mindmap render must never crash the page.
+      }
     })();
     return () => {
       cancelled = true;
@@ -40,7 +51,7 @@ export function MindMap({ markdown }: { markdown: string }) {
   }, [markdown]);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-[#fbfaf9]">
+    <div ref={containerRef} className="overflow-hidden rounded-lg border border-border bg-[#fbfaf9]">
       <svg ref={svgRef} className="h-[460px] w-full" aria-label="Mind map" />
     </div>
   );

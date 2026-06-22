@@ -36,8 +36,9 @@ LABELS: dict[str, str] = {
 }
 
 BUMP = 1.5            # default weight added when the user picks a style
-DECAY = 0.9          # multiply all scores before each nudge (older prefs fade)
-MIX_THRESHOLD = 0.6  # blend the 2nd style when it's within this of the top
+DECAY = 0.5          # multiply all scores before each nudge — the style you just
+                     # clicked should clearly WIN, not blend with the previous one
+MIX_THRESHOLD = 0.35 # only blend the 2nd style when it's genuinely close to the top
 MAX_EFFECTIVE = 2    # at most this many styles emphasized at once
 
 
