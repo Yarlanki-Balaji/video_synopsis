@@ -10,6 +10,10 @@ bcrypt==4.2.1
 PyJWT==2.10.1
 email-validator==2.2.0
 httpx==0.28.1
+# Google sign-in verifies ID tokens with these. They arrive transitively via
+# google-genai today, but auth.py imports them directly — pin them explicitly.
+google-auth==2.53.0
+requests==2.34.2
 youtube-transcript-api==1.2.4
 tiktoken==0.13.0
 google-genai==2.8.0

@@ -26,15 +26,32 @@ async def lifespan(app: FastAPI):
     if "*" in settings.cors_origin_list:
         raise RuntimeError("CORS_ORIGINS must be explicit origins, not '*'")
 
-    # Production hardening.
+    # Production hardening — fail fast at boot rather than mis-serving later.
     if settings.is_production:
         if settings.jwt_secret == "dev-insecure-secret-change-me" or len(settings.jwt_secret) < 32:
             raise RuntimeError("JWT_SECRET must be a strong (>=32 char) value in production")
-        if not settings.resend_api_key:
-            # Console email mode logs reset tokens — unsafe in production.
-            raise RuntimeError("RESEND_API_KEY is required in production")
+        # A real email provider is required (console mode logs reset tokens). Brevo
+        # OR Resend is fine — email.py prefers Brevo when both are configured.
+        has_brevo = bool(settings.brevo_api_key and settings.brevo_sender_email)
+        if not (settings.resend_api_key or has_brevo):
+            raise RuntimeError(
+                "An email provider is required in production: set RESEND_API_KEY, "
+                "or BREVO_API_KEY + BREVO_SENDER_EMAIL"
+            )
+        # Require a real Postgres URL: without it the app silently falls back to a
+        # SQLite file on ephemeral disk and loses ALL data on every restart/redeploy.
+        if not settings.database_url or settings.effective_database_url.startswith("sqlite"):
+            raise RuntimeError("DATABASE_URL (Postgres) is required in production")
+        # Don't ship deterministic [stub] summaries: refuse to start with no LLM key.
+        if settings.effective_llm_provider == "stub":
+            raise RuntimeError("No LLM key configured: set GEMINI_API_KEY or GROQ_API_KEY in production")
+        # On a cloud IP the direct caption fetch is blocked, so prod needs the
+        # managed provider — and it's useless without its key.
+        if settings.transcript_provider == "managed" and not settings.transcript_api_key:
+            raise RuntimeError("TRANSCRIPT_PROVIDER=managed requires TRANSCRIPT_API_KEY")
 
-    # Dev convenience: auto-create tables. Production uses Alembic migrations.
+    # Dev convenience: auto-create tables. Production schema is managed by Alembic
+    # (`alembic upgrade head` runs on deploy — see render.yaml startCommand).
     if not settings.is_production:
         await init_models()
 

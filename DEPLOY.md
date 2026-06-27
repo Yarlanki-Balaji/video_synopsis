@@ -7,14 +7,22 @@ Vercel domain — no cross-site cookie problems.
 
 ```
 Browser ──> Vercel (Next.js)  ──proxy /api,/auth──>  Render (FastAPI) ──> Aiven Postgres
-                                                                       └─> Aiven Valkey (optional)
-                                                          └─> Groq API (summaries)
+                                                                       ├─> Aiven Valkey (optional)
+                                                          ├─> Gemini / Groq API (summaries)
+                                                          └─> Supadata (YouTube transcripts on cloud IPs)
 ```
 
 ## 0. You'll need
 - Accounts: **Aiven**, **Render**, **Vercel** (all have free tiers).
-- A **Groq API key** (`gsk_...`) and a **Resend API key** (free; required in prod).
+- An **LLM key**: **Gemini** (`GEMINI_API_KEY`, preferred — 1M-token context) and/or a
+  **Groq key** (`gsk_...`). At least one is required, or the app refuses to start.
+- A **managed transcript provider key** (`TRANSCRIPT_API_KEY`, e.g. **Supadata**). Required
+  in production: a cloud IP can't fetch YouTube captions directly (it gets IP-blocked), so
+  URL summarization goes through the managed provider. Without it, only paste/upload work.
+- An **email key**: a **Resend** key *or* a **Brevo** key + verified sender (one is required in prod).
 - This repo on GitHub (already connected).
+- **Note:** the optional **Hermes** learning-agent sidecar is **not** part of this deploy
+  (it stays off — `/api/comprehension/*` return 503). The rest of the app runs without it.
 
 > **Never paste secrets into chat or commit them.** Put them in each provider's
 > dashboard env settings. `.env` files are gitignored.
@@ -34,7 +42,7 @@ secrets (Step 4 lists them).
 **Option B (manual):** New → **Web Service** → this repo →
 - Root Directory: `backend`
 - Build: `pip install -r requirements.txt`
-- Start: `python -m app.cli init-db && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- Start: `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - Health check path: `/healthz`
 
 Deploy, then copy the backend URL, e.g. `https://video-synopsis-api.onrender.com`.
@@ -44,16 +52,27 @@ New Project → import this repo →
 - **Root Directory: `frontend`** (Framework auto-detects Next.js)
 - Environment variable: **`BACKEND_ORIGIN`** = your Render URL from Step 2.
 
+> **`BACKEND_ORIGIN` must exist at BUILD time.** Next.js inlines the `/api` and `/auth`
+> proxy targets when it builds, so set this in the Vercel project's env **before** the
+> build (it applies to Production builds by default). If it's missing, the deployed app
+> proxies to `http://localhost:8000` and every API/auth call fails. Re-set it and
+> **redeploy** after you have the Render URL.
+
 Deploy, then copy the Vercel URL, e.g. `https://your-app.vercel.app`.
 
 ## 4. Set the backend env vars (Render → Environment)
 | Var | Value |
 |---|---|
 | `ENVIRONMENT` | `production` |
-| `DATABASE_URL` | Aiven Postgres Service URI (Step 1) |
+| `DATABASE_URL` | Aiven Postgres Service URI (Step 1) — **required** |
 | `VALKEY_URL` | Aiven Valkey URI *(optional)* |
-| `GROQ_API_KEY` | your `gsk_...` key |
-| `RESEND_API_KEY` | your Resend key *(required in prod)* |
+| `GEMINI_API_KEY` | your Gemini key *(preferred; one key or a comma-separated list)* |
+| `GROQ_API_KEY` | your `gsk_...` key *(set Gemini and/or Groq — at least one)* |
+| `TRANSCRIPT_PROVIDER` | `managed` *(set by the blueprint)* |
+| `TRANSCRIPT_API_KEY` | your Supadata key *(required for YouTube-URL summaries in prod)* |
+| `RESEND_API_KEY` | your Resend key *(required unless Brevo is set)* |
+| `BREVO_API_KEY` | your Brevo key *(alternative to Resend)* |
+| `BREVO_SENDER_EMAIL` | a verified Brevo sender address *(with `BREVO_API_KEY`)* |
 | `EMAIL_FROM` | e.g. `Video Synopsis <noreply@yourdomain>` |
 | `CORS_ORIGINS` | your **Vercel URL** (Step 3) |
 | `PUBLIC_APP_URL` | your **Vercel URL** (Step 3) |
@@ -63,20 +82,29 @@ Deploy, then copy the Vercel URL, e.g. `https://your-app.vercel.app`.
 `CORS_ORIGINS` and `PUBLIC_APP_URL` need the Vercel URL, so set them **after** Step 3,
 then **redeploy** the Render service.
 
-> The backend **refuses to start in production** unless `JWT_SECRET` is strong
-> (≥32 chars) and `RESEND_API_KEY` is set — both are safety checks.
+> The backend **fails fast at boot in production** unless: `JWT_SECRET` is strong
+> (≥32 chars); an email provider is set (`RESEND_API_KEY`, or `BREVO_API_KEY` +
+> `BREVO_SENDER_EMAIL`); `DATABASE_URL` (Postgres) is set; an LLM key is set
+> (`GEMINI_API_KEY` or `GROQ_API_KEY`); and, since `TRANSCRIPT_PROVIDER=managed`,
+> `TRANSCRIPT_API_KEY` is set. These guards turn silent misconfig into a clear startup error.
 
 ## 5. Verify
 1. Open the **Vercel URL** → sign up (email + password) → you should land signed in.
-2. Go to **Summarize**, paste a transcript → real Groq summaries (not `[stub]`).
-3. `GET https://<render-url>/healthz` → `{"status":"ok"}`; `/readyz` shows DB `ok`.
+2. Go to **Summarize**, paste a transcript → real summaries (not `[stub]`).
+3. Paste a **YouTube URL** → the transcript is fetched via the managed provider → summary.
+4. `GET https://<render-url>/healthz` → `{"status":"ok"}`; `/readyz` shows DB `ok`.
 
 ## Notes & limits
 - **Render free** spins the service down when idle → first request after a sleep is
   slow (cold start). The in-process job worker only runs while the instance is awake;
   for always-on background processing, upgrade the plan or add an external queue (E4).
-- **Schema:** `init-db` runs on each start (idempotent `create_all`). When the schema
-  changes meaningfully, switch to Alembic migrations.
+- **File uploads** are written to the instance's local (ephemeral) disk and transcoded
+  with `static-ffmpeg` (downloaded on first use). Fine for light use; for reliability,
+  attach a Render disk or use object storage.
+- **Schema:** migrations run on each deploy via `alembic upgrade head` (idempotent —
+  creates everything on a fresh DB, applies only new revisions on an existing one). Add
+  new migrations with `alembic revision --autogenerate -m "..."` → review → commit.
+  *(Upgrading a DB that predates Alembic? `alembic stamp head` once, then deploy.)*
 - **Switching off the stub:** once `GROQ_API_KEY` is set, new summaries are real.
   Old cached `[stub]` rows (if any) are keyed by transcript hash — summarize fresh
   transcripts, or clear the `summaries` table.

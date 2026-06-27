@@ -216,7 +216,14 @@ async def get_transcript(body: TranscriptIn, user: User = Depends(get_current_us
     try:
         text = await fetch_captions(video_id)
     except NoTranscript:
-        audio_ok = settings.audio_fallback_enabled and bool(settings.groq_api_key or settings.gemini_keys)
+        # The managed provider already attempts server-side ASR, and the local
+        # yt-dlp audio fallback is IP-blocked on cloud hosts — so when managed,
+        # audio can't add anything for a URL. Only offer it with the local provider.
+        audio_ok = (
+            settings.transcript_provider != "managed"
+            and settings.audio_fallback_enabled
+            and bool(settings.groq_api_key or settings.gemini_keys)
+        )
         if not audio_ok:
             raise HTTPException(422, "This video has no captions available.")
         title, duration = await fetch_metadata(video_id)

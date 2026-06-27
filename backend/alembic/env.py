@@ -1,9 +1,7 @@
 import asyncio
 from logging.config import fileConfig
 
-from sqlalchemy import pool
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
@@ -23,7 +21,7 @@ import sys  # noqa: E402
 # alembic/ lives inside backend/; make the `app` package importable.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db import Base  # noqa: E402
+from app.db import Base, _make_engine  # noqa: E402
 from app import models  # noqa: E402,F401  (import registers every model on Base.metadata)
 from app.config import settings  # noqa: E402
 
@@ -70,16 +68,14 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    """In this scenario we need to create an Engine
-    and associate a connection with the context.
+    """Create an Engine and associate a connection with the context.
 
+    Reuse the app's engine builder so managed-Postgres SSL params (Aiven's
+    `?sslmode=require`, `channel_binding`) are translated to asyncpg's `ssl`
+    connect-arg exactly as the running app does — otherwise asyncpg rejects them.
     """
 
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = _make_engine()
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

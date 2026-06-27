@@ -13,6 +13,7 @@ IP (e.g. Render) hits YouTube's bot-block ("Wall B"). So the strategy is:
 """
 from __future__ import annotations
 
+import asyncio
 import re
 
 import httpx
@@ -163,14 +164,104 @@ def _fetch_via_library(video_id: str) -> str:
         raise TranscriptError(f"Couldn't fetch the transcript ({type(exc).__name__}).")
 
 
+def _managed_text_from_payload(data: object) -> str:
+    """Pull transcript text out of a managed-provider JSON body. Handles plain-text
+    mode (`content` is a string) and segmented mode (`content` is a list of
+    {text, ...} chunks); tolerates a couple of common alternate field names."""
+    content = data.get("content") if isinstance(data, dict) else None
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        text = " ".join(seg.get("text", "") for seg in content if isinstance(seg, dict))
+    elif isinstance(data, dict):
+        text = data.get("transcript") or data.get("text") or ""
+    else:
+        text = ""
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _raise_for_managed_status(status_code: int) -> None:
+    """Map a managed-provider HTTP status to a user-safe TranscriptError. Always
+    raises (200/202 are handled by the caller before this is reached)."""
+    if status_code == 206:  # Supadata: "no transcript available for this video"
+        raise NoTranscript("This video doesn't have a transcript available.")
+    if status_code in (401, 403):
+        # Auth/quota/config problem — keep the cause out of the user-facing message.
+        raise TranscriptError("The transcript service rejected the request. Please try again later.")
+    if status_code == 404:
+        raise VideoUnavailable("This video is unavailable or can't be transcribed.")
+    if status_code in (400, 422):
+        raise BadUrl("That doesn't look like a valid YouTube video.")
+    if status_code == 429:
+        raise TranscriptBlocked("The transcript service is busy right now. Please try again shortly.")
+    if status_code >= 500:
+        raise TranscriptBlocked("The transcript service had an error. Please try again shortly.")
+    raise TranscriptError(f"Transcript service error ({status_code}).")
+
+
+async def _poll_managed_job(client: httpx.AsyncClient, started: object, deadline_s: int) -> dict:
+    """Poll a managed-provider async transcript job (HTTP 202 + a job id) until it
+    completes, within ~deadline_s seconds. Returns the completed result body."""
+    job_id = ""
+    if isinstance(started, dict):
+        job_id = str(started.get("jobId") or started.get("id") or "").strip()
+    if not job_id:  # nothing to poll — treat the initial body as the result
+        return started if isinstance(started, dict) else {}
+    job_url = settings.transcript_api_url.rstrip("/") + "/" + job_id
+    headers = {"x-api-key": (settings.transcript_api_key or "").strip()}
+    for _ in range(max(1, deadline_s // 2)):
+        await asyncio.sleep(2)
+        jr = await client.get(job_url, headers=headers)
+        if jr.status_code != 200:
+            _raise_for_managed_status(jr.status_code)
+        body = jr.json()
+        status_str = ((body.get("status") if isinstance(body, dict) else "") or "").lower()
+        if status_str in ("completed", "complete", "done", "success", "succeeded"):
+            return body
+        if status_str in ("failed", "error"):
+            raise TranscriptBlocked("The transcript service couldn't process this video.")
+        # else: queued / active — keep waiting
+    raise TranscriptBlocked("The transcript is still being prepared. Please try again shortly.")
+
+
 async def _fetch_managed(video_id: str) -> str:
-    """PROD seam: call a managed transcript provider (residential IPs + PO tokens).
-    Not wired to a specific vendor yet — set TRANSCRIPT_PROVIDER and implement the
-    REST call here when you pick one (e.g. Supadata). See plan §4.1."""
-    raise TranscriptError(
-        "No managed transcript provider is configured. Set TRANSCRIPT_PROVIDER, "
-        "or run locally where a direct fetch works."
-    )
+    """PROD path: fetch a transcript via a managed provider (Supadata-compatible).
+    Works from cloud/datacenter IPs, where the direct library fetch is IP-blocked.
+    Requires TRANSCRIPT_API_KEY; TRANSCRIPT_API_URL can point at a compatible vendor."""
+    api_key = (settings.transcript_api_key or "").strip()
+    if not api_key:
+        raise TranscriptError("Transcript service is not configured (TRANSCRIPT_API_KEY is unset).")
+    params = {"url": f"https://www.youtube.com/watch?v={video_id}", "text": "true", "lang": "en"}
+    headers = {"x-api-key": api_key}
+    timeout = settings.transcript_api_timeout
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.get(settings.transcript_api_url, params=params, headers=headers)
+            if r.status_code == 200:
+                data = await _managed_result(client, r, timeout)
+            elif r.status_code == 202:  # async job for long videos — poll it
+                data = await _poll_managed_job(client, r.json(), timeout)
+            else:
+                _raise_for_managed_status(r.status_code)
+                data = {}  # unreachable; _raise_for_managed_status always raises
+    except TranscriptError:
+        raise
+    except httpx.HTTPError as exc:
+        raise TranscriptBlocked(f"Couldn't reach the transcript service ({type(exc).__name__}).")
+
+    text = _managed_text_from_payload(data)
+    if not text:
+        raise NoTranscript("This video doesn't have a transcript available.")
+    return text
+
+
+async def _managed_result(client: httpx.AsyncClient, response: httpx.Response, timeout: int) -> dict:
+    """Normalize a 200 response: usually the transcript body, but some providers
+    return a job id even on 200 — poll in that case."""
+    body = response.json()
+    if isinstance(body, dict) and not body.get("content") and (body.get("jobId") or body.get("id")):
+        return await _poll_managed_job(client, body, timeout)
+    return body if isinstance(body, dict) else {}
 
 
 async def fetch_captions(video_id: str) -> str:

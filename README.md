@@ -10,8 +10,8 @@ pick the summaries you want, and get them back fast.
 
 ## Stack
 
-Next.js (Vercel) · FastAPI (Render) · Aiven Postgres + Valkey · Groq `gpt-oss-120b` ·
-Chrome MV3 extension + hosted transcript API + paste · Sentry.
+Next.js (Vercel) · FastAPI (Render) · Aiven Postgres + Valkey · Gemini / Groq `gpt-oss-120b`
+summaries · managed transcript API (Supadata) + paste/upload · Chrome MV3 extension.
 
 ## Repo layout
 
@@ -35,8 +35,9 @@ Following the milestone plan (`video_synopsis_final_plan.md` §8):
   cache, idempotency, Postgres quotas + circuit breaker; `POST /api/summarize` + `GET /api/jobs/{id}`
 - [x] **M3 — Transcript capture:** paste a YouTube URL → backend fetches the transcript
   (`POST /api/transcript`) → summarize. Direct caption fetch (`youtube-transcript-api`) works
-  on a residential/local IP; on a cloud IP set `TRANSCRIPT_PROVIDER=managed` and wire a managed
-  transcript API (plan §3 "Wall B"). Paste-transcript remains the universal fallback.
+  on a residential/local IP; on a cloud IP set `TRANSCRIPT_PROVIDER=managed` + `TRANSCRIPT_API_KEY`
+  to use a managed provider (Supadata, wired in `transcript.py`), which sidesteps the cloud-IP
+  block (plan §3 "Wall B"). Paste-transcript / upload remain the universal fallback.
 - [x] **M4 — Frontend pages:** Summarize (URL or paste), History (search/filter/select/export/delete),
   job detail, Settings (usage + change password), landing, login/signup, forgot/reset password;
   responsive app shell, dark/light, toasts.

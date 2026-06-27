@@ -142,6 +142,12 @@ class Settings(BaseSettings):
     # "local"   -> direct caption fetch (works on a residential/local IP).
     # "managed" -> call a managed transcript API (required on cloud IPs; plan §4.1).
     transcript_provider: str = "local"
+    # Managed provider (Supadata-compatible). transcript_api_key is REQUIRED when
+    # transcript_provider="managed" (startup enforces this in production). The URL is
+    # overridable so a different vendor with the same shape can be swapped in.
+    transcript_api_key: str | None = None
+    transcript_api_url: str = "https://api.supadata.ai/v1/transcript"
+    transcript_api_timeout: int = 60          # seconds (incl. async-job polling)
     # YouTube Data API v3 key — used ONLY for video TITLE + DURATION metadata.
     # (Data API v3 cannot download caption TEXT for videos you don't own — that
     # needs OAuth as the video owner — so the transcript itself still comes from

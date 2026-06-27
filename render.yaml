@@ -9,8 +9,9 @@ services:
     plan: free
     region: oregon
     buildCommand: pip install -r requirements.txt
-    # init-db creates tables (idempotent) before the server starts.
-    startCommand: python -m app.cli init-db && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Apply DB migrations (idempotent) before the server starts. On a fresh DB this
+    # creates the whole schema; on an existing one it applies only new revisions.
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /healthz
     envVars:
       - key: ENVIRONMENT
@@ -22,13 +23,27 @@ services:
       - key: COOKIE_SAMESITE
         value: lax                   # first-party via the Vercel proxy
       - key: DATABASE_URL
-        sync: false                  # Aiven Postgres "Service URI"
+        sync: false                  # Aiven Postgres "Service URI" (REQUIRED — app refuses to boot without it)
       - key: VALKEY_URL
         sync: false                  # Aiven Valkey URI (optional for now)
+      # --- LLM (set at least one key; GEMINI preferred for long transcripts) ---
       - key: GROQ_API_KEY
         sync: false                  # gsk_...
+      - key: GEMINI_API_KEY
+        sync: false                  # primary summarizer; 1M-token context (one key or comma-separated list)
+      # --- YouTube transcripts: a cloud IP is blocked from fetching captions
+      #     directly, so production must use a managed provider (Supadata-compatible).
+      - key: TRANSCRIPT_PROVIDER
+        value: managed
+      - key: TRANSCRIPT_API_KEY
+        sync: false                  # required when TRANSCRIPT_PROVIDER=managed
+      # --- Email (set Resend OR Brevo; app refuses to boot with neither) ---
       - key: RESEND_API_KEY
-        sync: false                  # required in production
+        sync: false                  # required in prod unless BREVO_* is set
+      - key: BREVO_API_KEY
+        sync: false                  # alternative to Resend (set with BREVO_SENDER_EMAIL)
+      - key: BREVO_SENDER_EMAIL
+        sync: false                  # a verified Brevo sender address
       - key: EMAIL_FROM
         sync: false                  # e.g. "Video Synopsis <noreply@yourdomain>"
       - key: CORS_ORIGINS
