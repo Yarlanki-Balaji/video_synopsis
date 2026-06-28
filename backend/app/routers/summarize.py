@@ -90,10 +90,18 @@ def _validate_transcript(text: str) -> str:
     if not re.search(r"[A-Za-z]{2,}", t):
         raise HTTPException(422, "That doesn't look like a transcript.")
     words = t.split()
-    if len(set(words)) < 5:
+    distinct = len(set(w.lower() for w in words))
+    if distinct < 5:
         raise HTTPException(422, "Transcript looks empty or repetitive.")
-    # Reject low-diversity spam (e.g. one phrase repeated thousands of times).
-    if len(words) > 30 and len(set(words)) / len(words) < 0.15:
+    # Reject low-diversity spam (e.g. one short phrase repeated thousands of times)
+    # WITHOUT punishing length. A type-token ratio (distinct/total) naturally FALLS
+    # as a transcript grows — common words recur, so a normal 30-minute video sits
+    # near 0.09 — which is why a flat 0.15 floor wrongly rejected long, diverse
+    # transcripts. Keep the 0.15 floor for short inputs, but cap the requirement at a
+    # small absolute vocabulary so any real-length transcript clears it while
+    # degenerate spam (a tiny, near-constant vocabulary) still fails.
+    min_distinct = min(60, int(0.15 * len(words)))
+    if distinct < min_distinct:
         raise HTTPException(422, "Transcript looks too repetitive.")
     return t
 
