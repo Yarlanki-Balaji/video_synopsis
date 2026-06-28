@@ -8,9 +8,6 @@ import { Button, Card, Chip, IconButton, Icons, Input, Spinner, Textarea } from 
 import { SummaryCard } from "@/components/summary";
 import { useToast } from "@/components/toast";
 import { SUMMARY_TYPES, NOTES_DEF, downloadText, jobToMarkdown, labelFor, orderedKeys } from "@/lib/summaries";
-import { TestUnderstandingButton } from "@/components/test-understanding-button";
-import { summaryContent } from "@/lib/comprehension";
-import { PersonalizedSummary } from "@/components/personalized-summary";
 
 const MIN_CHARS = 50;
 const MAX_CHARS = 200_000;
@@ -459,7 +456,6 @@ export function Workbench({ mode }: { mode: Mode }) {
               </h2>
             </div>
             <div className="flex items-center gap-2">
-              <TestUnderstandingButton transcript={summaryContent(job?.summaries)} />
               <Button variant="outline" size="sm" onClick={copyAll}>
                 <Icons.copy className="h-4 w-4" /> Copy all
               </Button>
@@ -468,7 +464,6 @@ export function Workbench({ mode }: { mode: Mode }) {
               </Button>
             </div>
           </div>
-          <PersonalizedSummary summaries={job?.summaries} />
           {keys.map((t) =>
             job?.summaries[t] ? (
               <SummaryCard key={t} type={t} content={job.summaries[t]} onRegenerate={regenerate} regenerating={regen === t} />

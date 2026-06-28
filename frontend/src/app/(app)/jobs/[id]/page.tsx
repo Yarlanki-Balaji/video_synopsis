@@ -10,9 +10,6 @@ import { Button, Card, Icons, Skeleton, Spinner } from "@/components/ui";
 import { ConfirmDialog } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { downloadText, jobToMarkdown, orderedKeys } from "@/lib/summaries";
-import { TestUnderstandingButton } from "@/components/test-understanding-button";
-import { summaryContent } from "@/lib/comprehension";
-import { PersonalizedSummary } from "@/components/personalized-summary";
 
 type JobView = {
   status: string;
@@ -105,7 +102,6 @@ export default function JobPage() {
         </Link>
         {done && keys.length > 0 && (
           <div className="flex items-center gap-2">
-            <TestUnderstandingButton transcript={summaryContent(job?.summaries)} />
             <Button variant="outline" size="sm" onClick={() => downloadText("video-summary.md", markdown())}>
               <Icons.download className="h-4 w-4" /> Download
             </Button>
@@ -139,7 +135,6 @@ export default function JobPage() {
         </Card>
       )}
 
-      {done && <PersonalizedSummary summaries={job?.summaries} />}
       {done && keys.map((t) => (job.summaries[t] ? <SummaryCard key={t} type={t} content={job.summaries[t]} /> : null))}
 
       <ConfirmDialog

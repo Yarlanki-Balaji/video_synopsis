@@ -21,8 +21,6 @@ Browser ──> Vercel (Next.js)  ──proxy /api,/auth──>  Render (FastAPI
   URL summarization goes through the managed provider. Without it, only paste/upload work.
 - An **email key**: a **Resend** key *or* a **Brevo** key + verified sender (one is required in prod).
 - This repo on GitHub (already connected).
-- **Note:** the optional **Hermes** learning-agent sidecar is **not** part of this deploy
-  (it stays off — `/api/comprehension/*` return 503). The rest of the app runs without it.
 
 > **Never paste secrets into chat or commit them.** Put them in each provider's
 > dashboard env settings. `.env` files are gitignored.

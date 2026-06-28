@@ -75,15 +75,6 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
-    op.create_table('comprehension_profiles',
-    sa.Column('user_id', sa.String(length=32), nullable=False),
-    sa.Column('reading_level', sa.String(length=16), nullable=False),
-    sa.Column('style_notes', sa.Text(), nullable=False),
-    sa.Column('understanding_history', sa.Text(), nullable=False),
-    sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('user_id')
-    )
     op.create_table('jobs',
     sa.Column('id', sa.String(length=32), nullable=False),
     sa.Column('user_id', sa.String(length=32), nullable=False),
@@ -95,7 +86,7 @@ def upgrade() -> None:
     sa.Column('lang', sa.String(length=8), nullable=False),
     sa.Column('summary_types', sa.String(length=255), nullable=False),
     sa.Column('complete_notes', sa.Boolean(), nullable=False),
-    sa.Column('force', sa.Boolean(), server_default=sa.text('0'), nullable=False),
+    sa.Column('force', sa.Boolean(), server_default=sa.false(), nullable=False),
     sa.Column('status', sa.String(length=16), nullable=False),
     sa.Column('phase', sa.String(length=64), nullable=True),
     sa.Column('error', sa.Text(), nullable=True),
@@ -179,7 +170,6 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_jobs_idempotency_key'), table_name='jobs')
     op.drop_index(op.f('ix_jobs_created_at'), table_name='jobs')
     op.drop_table('jobs')
-    op.drop_table('comprehension_profiles')
     op.drop_index(op.f('ix_users_email'), table_name='users')
     op.drop_table('users')
     op.drop_index(op.f('ix_summaries_video_id'), table_name='summaries')

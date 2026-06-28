@@ -81,20 +81,6 @@ class Settings(BaseSettings):
     # Summarizer backend: "auto" (Gemini if its key is set, else Groq), "gemini", "groq".
     llm_provider: str = "auto"
 
-    # --- Hermes agent sidecar (per-user comprehension features) ---
-    # Hermes runs as a SEPARATE service (its OpenAI-compatible API server). These
-    # point our backend at it. hermes_api_key MUST match Hermes' API_SERVER_KEY.
-    # Leave hermes_enabled False to keep the /api/comprehension endpoints off.
-    hermes_enabled: bool = False
-    hermes_base_url: str = "http://localhost:8642/v1"
-    hermes_api_key: str | None = None
-    hermes_model: str = "hermes-agent"
-    hermes_namespace: str = "vsai"
-    hermes_timeout_seconds: int = 120
-    # Where the sidecar's HERMES_HOME is, so the backend can read the memory files it
-    # writes (same-host demo). Empty -> use HERMES_HOME env / the platform default.
-    hermes_home: str | None = None
-
     @property
     def gemini_keys(self) -> list[str]:
         """All configured Gemini keys (GEMINI_API_KEY split on commas), deduped

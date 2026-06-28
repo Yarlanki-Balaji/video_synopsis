@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from .config import settings
 from .db import init_models
 from .jobs import start_worker, stop_worker
-from .routers import auth, comprehension, health, summarize
+from .routers import auth, health, summarize
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 
@@ -49,6 +49,21 @@ async def lifespan(app: FastAPI):
         # managed provider — and it's useless without its key.
         if settings.transcript_provider == "managed" and not settings.transcript_api_key:
             raise RuntimeError("TRANSCRIPT_PROVIDER=managed requires TRANSCRIPT_API_KEY")
+        # The CSRF guard rejects any state-changing request whose Origin isn't in
+        # CORS_ORIGINS. A leftover localhost default in production silently 403s
+        # every login/signup/summarize — so fail fast at boot instead.
+        if any("localhost" in o or "127.0.0.1" in o for o in settings.cors_origin_list):
+            raise RuntimeError(
+                "CORS_ORIGINS must be your real frontend origin(s) in production, not "
+                "localhost — otherwise every state-changing request fails the CSRF check."
+            )
+        # Reset/verification emails build links from PUBLIC_APP_URL; a localhost
+        # default in production sends users dead links.
+        if "localhost" in settings.public_app_url or "127.0.0.1" in settings.public_app_url:
+            raise RuntimeError(
+                "PUBLIC_APP_URL must be your real frontend URL in production, not "
+                "localhost — it's used to build links in reset/verification emails."
+            )
 
     # Dev convenience: auto-create tables. Production schema is managed by Alembic
     # (`alembic upgrade head` runs on deploy — see render.yaml startCommand).
@@ -97,7 +112,6 @@ async def csrf_origin_guard(request: Request, call_next):
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(summarize.router)
-app.include_router(comprehension.router)
 
 
 @app.get("/")
