@@ -86,7 +86,7 @@ def upgrade() -> None:
     sa.Column('lang', sa.String(length=8), nullable=False),
     sa.Column('summary_types', sa.String(length=255), nullable=False),
     sa.Column('complete_notes', sa.Boolean(), nullable=False),
-    sa.Column('force', sa.Boolean(), server_default=sa.false(), nullable=False),
+    sa.Column('force', sa.Boolean(), server_default=sa.text('false'), nullable=False),
     sa.Column('status', sa.String(length=16), nullable=False),
     sa.Column('phase', sa.String(length=64), nullable=True),
     sa.Column('error', sa.Text(), nullable=True),
