@@ -14,7 +14,7 @@ const FEATURES = [
   { icon: Icons.bolt, title: "Any length, handled", body: "Long transcripts are split, digested, and recombined automatically — paste hours of video and it just works." },
   { icon: Icons.copy, title: "Copy & export", body: "One-click copy or download any summary as clean Markdown, ready to drop into your notes." },
   { icon: Icons.history, title: "Saved history", body: "Every summary is kept in your history — search, revisit, export, or delete it anytime." },
-  { icon: Icons.shield, title: "Private & secure", body: "Your account is protected with hashed passwords, rotating sessions, and per-account isolation." },
+  { icon: Icons.shield, title: "Private & secure", body: "Your history is isolated to your email address — no one else can see your summaries." },
 ];
 
 const CHIPS = ["Brief", "Detailed", "Bullets", "Chapters", "ELI5", "Notes"];
@@ -63,14 +63,11 @@ export default function Landing() {
           </div>
           <div className="flex items-center gap-1.5">
             <ThemeToggle />
-            <Link href="/login" className="rounded-lg px-3.5 py-2 text-sm text-muted transition-colors hover:text-fg">
-              Log in
-            </Link>
             <Link
-              href="/signup"
+              href="/signin"
               className="rounded-[var(--radius-button)] bg-[image:var(--gradient-accent)] px-4 py-2 text-sm font-medium text-accent-contrast shadow-[var(--shadow-sm)] transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-glow"
             >
-              Sign up
+              Get started
             </Link>
           </div>
         </div>
@@ -93,16 +90,10 @@ export default function Landing() {
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
-                href="/signup"
+                href="/signin"
                 className="inline-flex h-11 items-center justify-center rounded-[var(--radius-button)] bg-[image:var(--gradient-accent)] px-6 text-sm font-medium text-accent-contrast shadow-[var(--shadow-sm)] transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-glow"
               >
                 {"Get started — it's free"}
-              </Link>
-              <Link
-                href="/login"
-                className="inline-flex h-11 items-center justify-center rounded-[var(--radius-button)] border border-border bg-surface px-6 text-sm font-medium transition-colors hover:bg-surface-2"
-              >
-                Log in
               </Link>
             </div>
 
@@ -159,9 +150,9 @@ export default function Landing() {
         <section className="mx-auto max-w-6xl px-5 pb-20">
           <div className="hero-aurora overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface px-6 py-12 text-center shadow-card">
             <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Ready to summarize?</h2>
-            <p className="mx-auto mt-3 max-w-md text-muted">Create a free account and turn your first transcript into summaries right now.</p>
+            <p className="mx-auto mt-3 max-w-md text-muted">Enter your email and start turning your first transcript into summaries right now.</p>
             <Link
-              href="/signup"
+              href="/signin"
               className="mt-7 inline-flex h-11 items-center justify-center rounded-[var(--radius-button)] bg-[image:var(--gradient-accent)] px-6 text-sm font-medium text-accent-contrast shadow-[var(--shadow-sm)] transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-glow"
             >
               Get started
@@ -177,8 +168,7 @@ export default function Landing() {
             <span>Video Synopsis</span>
           </div>
           <div className="flex items-center gap-4">
-            <Link href="/login" className="hover:text-fg">Log in</Link>
-            <Link href="/signup" className="hover:text-fg">Sign up</Link>
+            <Link href="/signin" className="hover:text-fg">Sign in</Link>
           </div>
         </div>
       </footer>

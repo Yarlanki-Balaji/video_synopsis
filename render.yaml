@@ -37,16 +37,7 @@ services:
         value: managed
       - key: TRANSCRIPT_API_KEY
         sync: false                  # required when TRANSCRIPT_PROVIDER=managed
-      # --- Email (set Resend OR Brevo; app refuses to boot with neither) ---
-      - key: RESEND_API_KEY
-        sync: false                  # required in prod unless BREVO_* is set
-      - key: BREVO_API_KEY
-        sync: false                  # alternative to Resend (set with BREVO_SENDER_EMAIL)
-      - key: BREVO_SENDER_EMAIL
-        sync: false                  # a verified Brevo sender address
-      - key: EMAIL_FROM
-        sync: false                  # e.g. "Video Synopsis <noreply@yourdomain>"
       - key: CORS_ORIGINS
         sync: false                  # your Vercel URL, e.g. https://your-app.vercel.app
       - key: PUBLIC_APP_URL
-        sync: false                  # your Vercel URL (used in reset links)
+        sync: false                  # your Vercel URL

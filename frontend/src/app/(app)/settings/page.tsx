@@ -3,9 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { api, errorDetail } from "@/lib/api";
+import { api } from "@/lib/api";
 import { Button, Card, Chip, Icons, Skeleton } from "@/components/ui";
-import { PasswordField } from "@/components/auth";
 import { useToast } from "@/components/toast";
 
 type Usage = { jobs_used: number; jobs_limit: number; jobs_remaining: number; resets_at: string };
@@ -67,57 +66,10 @@ function UsageCard() {
   );
 }
 
-function ChangePasswordCard() {
-  const toast = useToast();
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (next.length < 8) return toast.error("Password too short", "Use at least 8 characters.");
-    if (next !== confirm) return toast.error("Passwords don't match");
-    setBusy(true);
-    try {
-      const res = await api("/auth/change-password", {
-        method: "POST",
-        body: JSON.stringify({ current_password: current, new_password: next }),
-      });
-      if (!res.ok) throw new Error(await errorDetail(res, "Could not change password"));
-      setCurrent("");
-      setNext("");
-      setConfirm("");
-      toast.success("Password changed", "Other devices have been signed out.");
-    } catch (err) {
-      toast.error("Could not change password", err instanceof Error ? err.message : undefined);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Card className="p-5">
-      <SectionTitle icon={Icons.lock}>Change password</SectionTitle>
-      <form onSubmit={onSubmit} className="flex flex-col gap-4">
-        <PasswordField label="Current password" value={current} onChange={setCurrent} autoComplete="current-password" />
-        <PasswordField label="New password" value={next} onChange={setNext} autoComplete="new-password" hint="At least 8 characters" />
-        <PasswordField label="Confirm new password" value={confirm} onChange={setConfirm} autoComplete="new-password" />
-        <div className="flex justify-end">
-          <Button type="submit" disabled={busy || !current || !next || !confirm}>
-            {busy ? "Updating…" : "Update password"}
-          </Button>
-        </div>
-      </form>
-    </Card>
-  );
-}
-
 function AppearanceCard() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   useEffect(() => {
     let active = true;
-    // Defer the read so it isn't a synchronous setState in the effect body.
     (async () => {
       await Promise.resolve();
       if (active) setTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark");
@@ -175,12 +127,14 @@ export default function SettingsPage() {
 
   async function logout() {
     await api("/auth/logout", { method: "POST" });
-    router.push("/login");
+    router.push("/signin");
   }
+
   async function logoutAll() {
-    await api("/auth/logout-all", { method: "POST" });
-    toast.success("Signed out of all devices");
-    router.push("/login");
+    // Sign out by invalidating the session server-side, then redirect.
+    await api("/auth/logout", { method: "POST" });
+    toast.success("Signed out");
+    router.push("/signin");
   }
 
   return (
@@ -190,18 +144,20 @@ export default function SettingsPage() {
         <p className="text-sm">
           Signed in as <span className="font-medium">{email || "…"}</span>
         </p>
+        <p className="mt-1 text-xs text-muted">
+          To switch accounts, sign out and enter a different email address.
+        </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <Button variant="outline" onClick={logout}>
-            <Icons.logout className="h-4 w-4" /> Log out
+            <Icons.logout className="h-4 w-4" /> Sign out
           </Button>
           <Button variant="ghost" onClick={logoutAll}>
-            Log out all devices
+            Sign out all devices
           </Button>
         </div>
       </Card>
 
       <UsageCard />
-      <ChangePasswordCard />
       <AppearanceCard />
     </div>
   );

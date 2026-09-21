@@ -1,8 +1,6 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
-
 import { Icons, Spinner } from "./ui";
 
 export function AuthShell({
@@ -96,63 +94,12 @@ export function Field({
   );
 }
 
-export function PasswordField({
-  label,
-  value,
-  onChange,
-  autoComplete,
-  hint,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  autoComplete?: string;
-  hint?: string;
-}) {
-  const [show, setShow] = useState(false);
-  return (
-    <label className="flex flex-col gap-1.5 text-sm">
-      <span className="font-medium text-fg">{label}</span>
-      <div className="relative">
-        <input
-          type={show ? "text" : "password"}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          autoComplete={autoComplete}
-          required
-          className={`${inputClass} pr-10`}
-        />
-        <button
-          type="button"
-          onClick={() => setShow((s) => !s)}
-          aria-label={show ? "Hide password" : "Show password"}
-          title={show ? "Hide password" : "Show password"}
-          className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded text-muted transition-colors hover:text-fg"
-        >
-          {show ? (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9.9 4.2A11 11 0 0 1 12 4c6.5 0 10 8 10 8a18 18 0 0 1-2.2 3.2M6.6 6.6A18 18 0 0 0 2 12s3.5 8 10 8a11 11 0 0 0 3.4-.6" />
-              <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M2 2l20 20" />
-            </svg>
-          ) : (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M2 12s3.5-8 10-8 10 8 10 8-3.5 8-10 8-10-8-10-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-          )}
-        </button>
-      </div>
-      {hint && <span className="text-xs text-muted">{hint}</span>}
-    </label>
-  );
-}
-
 export function SubmitButton({ busy, children }: { busy: boolean; children: React.ReactNode }) {
   return (
     <button
       type="submit"
       disabled={busy}
-      className="mt-1 inline-flex h-11 items-center justify-center gap-2 rounded-[var(--radius-button)] bg-[image:var(--gradient-accent)] font-medium text-accent-contrast shadow-[var(--shadow-sm)] transition-[transform,box-shadow,opacity] duration-150 hover:-translate-y-px hover:shadow-glow active:translate-y-0 disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-[var(--shadow-sm)]"
+      className="mt-1 inline-flex h-11 w-full items-center justify-center gap-2 rounded-[var(--radius-button)] bg-[image:var(--gradient-accent)] font-medium text-accent-contrast shadow-[var(--shadow-sm)] transition-[transform,box-shadow,opacity] duration-150 hover:-translate-y-px hover:shadow-glow active:translate-y-0 disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-[var(--shadow-sm)]"
     >
       {busy ? (
         <>

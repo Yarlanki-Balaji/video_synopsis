@@ -19,14 +19,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         const res = await api("/auth/me");
         if (!active) return;
         if (!res.ok) {
-          router.replace("/login");
+          router.replace("/signin");
           return;
         }
         const me = (await res.json()) as { email: string };
         setEmail(me.email);
         setReady(true);
       } catch {
-        if (active) router.replace("/login");
+        if (active) router.replace("/signin");
       }
     })();
     return () => {

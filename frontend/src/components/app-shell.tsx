@@ -215,7 +215,7 @@ export function AppShell({ children, email }: { children: React.ReactNode; email
     try {
       await api("/auth/logout", { method: "POST" });
     } finally {
-      router.push("/login");
+      router.push("/signin");
     }
   }
 

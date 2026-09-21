@@ -1,10 +1,11 @@
-"""SQLAlchemy models for auth & accounts (M1).
+"""SQLAlchemy models.
 
-Schema (build guide Part B, minus the invite gate — signup is open for a
-private-network deployment):
-  - users:           identity + allowlist status + token_version (B4/B5)
-  - sessions:        refresh tokens, hashed + rotated + family for reuse-detect (B3)
-  - password_resets: single-use, short-lived, hashed at rest (B6)
+Schema:
+  - users:       identity + status + token_version
+  - sessions:    refresh tokens, hashed + rotated + family for reuse-detect
+  - jobs:        summarization jobs, per-user history
+  - summaries:   content-bound cache
+  - daily_usage: quota counters
 """
 from __future__ import annotations
 
@@ -33,7 +34,6 @@ def _uuid() -> str:
 
 
 class UserStatus(str, enum.Enum):
-    invited = "invited"
     active = "active"
     revoked = "revoked"
 
@@ -48,9 +48,10 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
-    password_hash: Mapped[str] = mapped_column(String(255))
+    # password_hash is nullable — email-only sign-in creates accounts without passwords.
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     status: Mapped[str] = mapped_column(String(16), default=UserStatus.active.value)
-    # Bumped on logout-all / reset / de-allowlist to invalidate live access tokens.
+    # Bumped on logout-all to invalidate live access tokens.
     token_version: Mapped[int] = mapped_column(Integer, default=0)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -76,54 +77,6 @@ class Session(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
-class PasswordReset(Base):
-    __tablename__ = "password_resets"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-
-
-class PendingSignup(Base):
-    """A signup awaiting email verification. The real User row is NOT created
-    until the emailed OTP is confirmed — so a wrong or abandoned code never
-    leaves an account behind (and never consumes a beta slot). One per email;
-    the hashed password lives here only until verification."""
-
-    __tablename__ = "pending_signups"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
-    password_hash: Mapped[str] = mapped_column(String(255))
-    code_hash: Mapped[str] = mapped_column(String(64), index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-
-
-class PasswordResetCode(Base):
-    """Single-use, short-lived 6-digit OTP for password reset. Like
-    EmailVerification: hashed, expiring, attempt-capped, and looked up per user
-    (code_hash is NOT unique — short codes can collide across users)."""
-
-    __tablename__ = "password_reset_codes"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    code_hash: Mapped[str] = mapped_column(String(64), index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-
-
 # --- M2: job engine + summaries + usage ------------------------------------
 
 class JobStatus(str, enum.Enum):
@@ -134,7 +87,7 @@ class JobStatus(str, enum.Enum):
 
 
 class Job(Base):
-    """A summarization job. Postgres is the source of truth (E3)."""
+    """A summarization job. Postgres is the source of truth."""
 
     __tablename__ = "jobs"
 
@@ -150,8 +103,7 @@ class Job(Base):
     summary_types: Mapped[str] = mapped_column(String(255))  # comma-joined sorted
     complete_notes: Mapped[bool] = mapped_column(Boolean, default=False)
     # Regenerate: when set, the worker re-generates the requested types even if
-    # cached and OVERWRITES the shared Summary rows in place — so a regenerate
-    # never deletes another user's completed result (no empty window, no loss).
+    # cached and OVERWRITES the shared Summary rows in place.
     force: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     status: Mapped[str] = mapped_column(String(16), default=JobStatus.queued.value, index=True)
@@ -159,7 +111,7 @@ class Job(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
 
-    # Lease (E3/E4): which runner owns the job + a fencing token (lease_count).
+    # Lease: which runner owns the job + a fencing token (lease_count).
     lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     lease_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -169,7 +121,7 @@ class Job(Base):
 
 
 class Summary(Base):
-    """Content-bound, per-type cache + results (G4). Reused across requests only
+    """Content-bound, per-type cache + results. Reused across requests only
     when the transcript hash matches — safe sharing, no poisoning."""
 
     __tablename__ = "summaries"
@@ -188,7 +140,7 @@ class Summary(Base):
 
 
 class DailyUsage(Base):
-    """Postgres-authoritative usage counters (F5). scope = 'global' or 'user:<id>'."""
+    """Postgres-authoritative usage counters. scope = 'global' or 'user:<id>'."""
 
     __tablename__ = "daily_usage"
     __table_args__ = (UniqueConstraint("scope", "day", name="uq_usage_scope_day"),)
@@ -201,7 +153,7 @@ class DailyUsage(Base):
 
 
 class ServiceState(Base):
-    """Singleton row (id=1) holding circuit-breaker state (F5)."""
+    """Singleton row (id=1) holding circuit-breaker state."""
 
     __tablename__ = "service_state"
 

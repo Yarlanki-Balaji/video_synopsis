@@ -1,50 +1,37 @@
-"""Auth & accounts endpoints (B1–B7).
+"""Auth endpoints — email-only sign-in.
 
 Routes (prefix /auth):
-  POST /signup                 create account (email + password), auto-login
-  POST /login                  email + password -> set cookies
-  POST /refresh                rotate refresh token (reuse -> revoke family)
-  POST /logout                 revoke current session family + clear cookies
-  POST /logout-all             bump token_version + revoke all sessions
-  GET  /me                     current user
-  POST /request-password-reset always 202 (no user enumeration)
-  POST /reset-password         consume reset token + force re-login
+  POST /signin   enter any email → auto-create/retrieve user → set session cookies
+  POST /logout   revoke current session family + clear cookies
+  GET  /me       current user info
 """
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import uuid4
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     HTTPException,
     Request,
     Response,
     status,
 )
-from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import delete, func, select, update
+from pydantic import BaseModel, EmailStr
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import get_session
 from ..deps import get_current_user
-from ..email import send_email
-from ..models import ClientType, PasswordResetCode, PendingSignup, Session, User, UserStatus
+from ..models import ClientType, Session, User, UserStatus
 from ..security import (
     create_access_token,
-    dummy_verify,
-    generate_otp,
     generate_token,
-    hash_password,
     hash_token,
     normalize_email,
     utcnow,
-    verify_password,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -56,38 +43,8 @@ REFRESH_PATH = "/auth"  # refresh cookie is only sent to /auth/* routes
 
 # --- Schemas -----------------------------------------------------------------
 
-class SignupIn(BaseModel):
+class SigninIn(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
-
-
-class LoginIn(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=1, max_length=128)
-
-
-class EmailIn(BaseModel):
-    email: EmailStr
-
-
-class ResetIn(BaseModel):
-    email: EmailStr
-    code: str = Field(min_length=4, max_length=8)
-    password: str = Field(min_length=8, max_length=128)
-
-
-class VerifyEmailIn(BaseModel):
-    email: EmailStr
-    code: str = Field(min_length=4, max_length=8)
-
-
-class GoogleAuthIn(BaseModel):
-    credential: str  # the Google ID token (JWT) from Google Identity Services
-
-
-class ChangePasswordIn(BaseModel):
-    current_password: str = Field(min_length=1, max_length=128)
-    new_password: str = Field(min_length=8, max_length=128)
 
 
 class UserOut(BaseModel):
@@ -112,21 +69,19 @@ def _set_auth_cookies(response: Response, access: str, refresh: str) -> None:
 
 
 def _clear_auth_cookies(response: Response) -> None:
-    # Attributes must match the originals or the browser won't clear the cookie
-    # (notably under SameSite=None; Secure in cross-site production).
     common = dict(secure=settings.cookie_secure, samesite=settings.cookie_samesite, httponly=True)
     response.delete_cookie(ACCESS_COOKIE, path="/", **common)
     response.delete_cookie(REFRESH_COOKIE, path=REFRESH_PATH, **common)
 
 
 async def _issue_session(
-    session: AsyncSession, user: User, response: Response,
+    db: AsyncSession, user: User, response: Response,
     *, family_id: str | None = None, client_type: str = ClientType.web.value,
 ) -> None:
     """Mint a new access token + refresh session and set both cookies."""
     raw_refresh = generate_token()
     fam = family_id or generate_token(16)
-    session.add(
+    db.add(
         Session(
             user_id=user.id,
             family_id=fam,
@@ -139,215 +94,59 @@ async def _issue_session(
     _set_auth_cookies(response, access, raw_refresh)
 
 
-def _otp_email_body(code: str) -> str:
-    return (
-        f"Your Video Synopsis verification code is: {code}\n\n"
-        f"It expires in {settings.email_otp_ttl_minutes} minutes."
-    )
-
-
-async def _verified_user_count(session: AsyncSession) -> int:
-    return (
-        await session.execute(
-            select(func.count()).select_from(User).where(User.email_verified_at.is_not(None))
-        )
-    ).scalar_one()
-
-
 # --- Endpoints ---------------------------------------------------------------
 
-@router.post("/signup", status_code=status.HTTP_202_ACCEPTED)
-async def signup(body: SignupIn, background: BackgroundTasks, session: AsyncSession = Depends(get_session)):
-    """Begin signup: store a PENDING signup and email a 6-digit code. No real
-    account exists until the code is confirmed at /auth/verify-email — so a wrong
-    or abandoned code never creates an account or consumes a beta slot."""
+@router.post("/signin", response_model=UserOut)
+async def signin(body: SigninIn, response: Response, db: AsyncSession = Depends(get_session)):
+    """Email-only sign-in: enter any email address → instantly signed in.
+    Creates a new user account on first use; retrieves the existing one on return visits.
+    No password, no OTP, no verification step required.
+    """
     email = normalize_email(body.email)
 
-    existing = (
-        await session.execute(select(User).where(User.email == email))
-    ).scalar_one_or_none()
-    if existing is not None:
-        if existing.email_verified_at is not None:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Account already exists")
-        # Legacy unverified account (pre-pending-signup) — clear it and continue.
-        await session.delete(existing)
-        await session.flush()
-
-    # Beta cap counts only real (verified) accounts.
-    if await _verified_user_count(session) >= settings.max_users:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "We've reached our beta user limit. Please check back soon."
-        )
-
-    # Replace any prior pending signup for this email, then issue a fresh code.
-    await session.execute(delete(PendingSignup).where(PendingSignup.email == email))
-    code = generate_otp()
-    session.add(
-        PendingSignup(
-            email=email,
-            password_hash=hash_password(body.password),
-            code_hash=hash_token(code),
-            expires_at=utcnow() + timedelta(minutes=settings.email_otp_ttl_minutes),
-        )
-    )
-    await session.commit()
-    background.add_task(send_email, email, "Your verification code", _otp_email_body(code))
-    return {"status": "verification_sent"}
-
-
-@router.post("/login", response_model=UserOut)
-async def login(body: LoginIn, response: Response, session: AsyncSession = Depends(get_session)):
-    email = normalize_email(body.email)
     user = (
-        await session.execute(select(User).where(User.email == email))
+        await db.execute(select(User).where(User.email == email))
     ).scalar_one_or_none()
 
-    # Password is checked BEFORE the status branch, so the 403 below is only
-    # reachable with valid credentials -> it is not an account-enumeration oracle.
     if user is None:
-        dummy_verify()  # equalize timing for unknown accounts
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
-    if not verify_password(body.password, user.password_hash):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
+        # First time this email signs in — create an account automatically.
+        user = User(
+            email=email,
+            status=UserStatus.active.value,
+        )
+        db.add(user)
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            # Race condition: another request created the user just now. Fetch it.
+            user = (
+                await db.execute(select(User).where(User.email == email))
+            ).scalar_one()
+
     if user.status != UserStatus.active.value:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account is not active")
-    if user.email_verified_at is None:
-        # Distinct 403 so the client can route the user to the verify-email page.
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Please verify your email to continue.")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "This account is not active.")
 
-    await _issue_session(session, user, response)
-    await session.commit()
-    return UserOut(id=user.id, email=user.email, status=user.status)
-
-
-@router.post("/google", response_model=UserOut)
-async def google_login(body: GoogleAuthIn, response: Response, session: AsyncSession = Depends(get_session)):
-    """Sign in with Google — LOGIN ONLY. Verifies the Google ID token and signs
-    in ONLY if a verified account already exists for that email. It never creates
-    an account (signup stays email + password + OTP)."""
-    if not settings.google_client_id:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Google sign-in is not configured.")
-
-    from google.auth.transport import requests as google_requests
-    from google.oauth2 import id_token
-
-    try:
-        claims = await run_in_threadpool(
-            id_token.verify_oauth2_token,
-            body.credential,
-            google_requests.Request(),
-            settings.google_client_id,
-        )
-    except Exception:  # noqa: BLE001 — bad signature/audience/expiry
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid Google sign-in.")
-
-    email = normalize_email(claims.get("email") or "")
-    if not email or not claims.get("email_verified", False):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your Google account email isn't verified.")
-
-    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
-    if user is None or user.email_verified_at is None or user.status != UserStatus.active.value:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "No verified account for this Google email. Please sign up and verify it first.",
-        )
-
-    await _issue_session(session, user, response)
-    await session.commit()
-    return UserOut(id=user.id, email=user.email, status=user.status)
-
-
-@router.post("/refresh", response_model=UserOut)
-async def refresh(request: Request, response: Response, session: AsyncSession = Depends(get_session)):
-    raw = request.cookies.get(REFRESH_COOKIE)
-    if not raw:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "No refresh token")
-
-    row = (
-        await session.execute(select(Session).where(Session.token_hash == hash_token(raw)))
-    ).scalar_one_or_none()
-
-    if row is None or row.revoked_at is not None or row.expires_at < utcnow():
-        _clear_auth_cookies(response)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid refresh token")
-
-    async def _revoke_family_and_fail() -> None:
-        await session.execute(
-            update(Session).where(Session.family_id == row.family_id, Session.revoked_at.is_(None))
-            .values(revoked_at=utcnow())
-        )
-        await session.commit()
-        _clear_auth_cookies(response)
-
-    # Fast path: an already-consumed token is being replayed -> theft (B3).
-    if row.used_at is not None:
-        await _revoke_family_and_fail()
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Refresh token reuse detected")
-
-    user = await session.get(User, row.user_id)
-    if user is None or user.status != UserStatus.active.value:
-        _clear_auth_cookies(response)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Inactive user")
-
-    # Atomically consume this token. If we lose the race (rowcount 0), another
-    # request already rotated it -> treat as reuse and revoke the family.
-    new_id = uuid4().hex
-    raw_new = generate_token()
-    consumed = await session.execute(
-        update(Session).where(Session.id == row.id, Session.used_at.is_(None))
-        .values(used_at=utcnow(), replaced_by_id=new_id)
-    )
-    if consumed.rowcount != 1:
-        await _revoke_family_and_fail()
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Refresh token reuse detected")
-
-    session.add(
-        Session(
-            id=new_id,
-            user_id=user.id,
-            family_id=row.family_id,
-            token_hash=hash_token(raw_new),
-            expires_at=utcnow() + timedelta(days=settings.refresh_token_ttl_days),
-            client_type=row.client_type,
-        )
-    )
-    access = create_access_token(user.id, user.token_version, audience=row.client_type)
-    _set_auth_cookies(response, access, raw_new)
-    await session.commit()
+    await _issue_session(db, user, response)
+    await db.commit()
     return UserOut(id=user.id, email=user.email, status=user.status)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(request: Request, session: AsyncSession = Depends(get_session)):
-    # Plain logout revokes the refresh family + clears cookies. The current
-    # access token stays valid until exp (<=30 min); use /logout-all to kill it
-    # immediately (bumps token_version).
+async def logout(request: Request, db: AsyncSession = Depends(get_session)):
+    """Revoke the current refresh session family and clear auth cookies."""
     raw = request.cookies.get(REFRESH_COOKIE)
     if raw:
         row = (
-            await session.execute(select(Session).where(Session.token_hash == hash_token(raw)))
+            await db.execute(select(Session).where(Session.token_hash == hash_token(raw)))
         ).scalar_one_or_none()
         if row is not None:
-            await session.execute(
-                update(Session).where(Session.family_id == row.family_id, Session.revoked_at.is_(None))
+            await db.execute(
+                update(Session)
+                .where(Session.family_id == row.family_id, Session.revoked_at.is_(None))
                 .values(revoked_at=utcnow())
             )
-            await session.commit()
-    # Clear cookies on the response we actually RETURN. (Mutating an injected
-    # Response and then returning a different one drops the Set-Cookie headers.)
-    resp = Response(status_code=status.HTTP_204_NO_CONTENT)
-    _clear_auth_cookies(resp)
-    return resp
-
-
-@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
-async def logout_all(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    user.token_version += 1  # invalidates every live access token (B4)
-    await session.execute(
-        update(Session).where(Session.user_id == user.id, Session.revoked_at.is_(None))
-        .values(revoked_at=utcnow())
-    )
-    await session.commit()
+            await db.commit()
     resp = Response(status_code=status.HTTP_204_NO_CONTENT)
     _clear_auth_cookies(resp)
     return resp
@@ -356,174 +155,3 @@ async def logout_all(user: User = Depends(get_current_user), session: AsyncSessi
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user)):
     return UserOut(id=user.id, email=user.email, status=user.status)
-
-
-@router.post("/verify-email", response_model=UserOut)
-async def verify_email(body: VerifyEmailIn, response: Response, session: AsyncSession = Depends(get_session)):
-    """Confirm the signup code and CREATE the account, then sign in. The account
-    only comes into existence here — never on an unconfirmed code."""
-    email = normalize_email(body.email)
-
-    existing = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
-    if existing is not None and existing.email_verified_at is not None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This email is already verified. Please log in.")
-
-    pending = (
-        await session.execute(select(PendingSignup).where(PendingSignup.email == email))
-    ).scalar_one_or_none()
-    if pending is None or pending.expires_at < utcnow() or pending.attempts >= settings.email_otp_max_attempts:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code. Please sign up again.")
-    if hash_token(body.code.strip()) != pending.code_hash:
-        pending.attempts += 1
-        await session.commit()
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Incorrect code.")
-
-    # Code OK — re-check the cap (authoritative at creation), then create the user.
-    if await _verified_user_count(session) >= settings.max_users:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "We've reached our beta user limit. Please check back soon."
-        )
-    if existing is not None:  # legacy unverified row for this email
-        await session.delete(existing)
-        await session.flush()
-
-    user = User(
-        email=email,
-        password_hash=pending.password_hash,
-        status=UserStatus.active.value,
-        email_verified_at=utcnow(),
-    )
-    session.add(user)
-    try:
-        await session.flush()
-    except IntegrityError:
-        await session.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, "Account already exists")
-
-    await session.execute(delete(PendingSignup).where(PendingSignup.email == email))
-    await _issue_session(session, user, response)  # verified -> sign in
-    await session.commit()
-    return UserOut(id=user.id, email=user.email, status=user.status)
-
-
-@router.post("/resend-verification", status_code=status.HTTP_202_ACCEPTED)
-async def resend_verification(
-    body: EmailIn, background: BackgroundTasks, session: AsyncSession = Depends(get_session)
-):
-    """Re-send the signup code for a pending signup. Always 202 (no enumeration)."""
-    email = normalize_email(body.email)
-    pending = (
-        await session.execute(select(PendingSignup).where(PendingSignup.email == email))
-    ).scalar_one_or_none()
-    if pending is not None:
-        code = generate_otp()
-        pending.code_hash = hash_token(code)
-        pending.expires_at = utcnow() + timedelta(minutes=settings.email_otp_ttl_minutes)
-        pending.attempts = 0
-        await session.commit()
-        background.add_task(send_email, email, "Your verification code", _otp_email_body(code))
-    return {"status": "accepted"}
-
-
-@router.post("/change-password", response_model=UserOut)
-async def change_password(
-    body: ChangePasswordIn,
-    response: Response,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    """Change password for the signed-in user.
-
-    Verifies the current password, then rotates everything: bump token_version
-    (kills every live access token), revoke all refresh sessions (logs out other
-    devices), and issue a fresh session so THIS device stays signed in.
-    """
-    if not verify_password(body.current_password, user.password_hash):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is incorrect")
-    if body.new_password == body.current_password:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "New password must be different")
-
-    user.password_hash = hash_password(body.new_password)
-    user.token_version += 1  # invalidate every existing access token
-    await session.execute(
-        update(Session).where(Session.user_id == user.id, Session.revoked_at.is_(None))
-        .values(revoked_at=utcnow())
-    )
-    # Re-issue a session for the current device with the new token_version.
-    await _issue_session(session, user, response)
-    await session.commit()
-    return UserOut(id=user.id, email=user.email, status=user.status)
-
-
-@router.post("/request-password-reset", status_code=status.HTTP_202_ACCEPTED)
-async def request_password_reset(
-    body: EmailIn, background: BackgroundTasks, session: AsyncSession = Depends(get_session)
-):
-    """Email a 6-digit reset code. Always 202 (no account enumeration)."""
-    email = normalize_email(body.email)
-    user = (
-        await session.execute(select(User).where(User.email == email))
-    ).scalar_one_or_none()
-
-    if user is not None and user.status == UserStatus.active.value:
-        # Invalidate any outstanding codes, then issue a fresh one.
-        await session.execute(
-            update(PasswordResetCode)
-            .where(PasswordResetCode.user_id == user.id, PasswordResetCode.used_at.is_(None))
-            .values(used_at=utcnow())
-        )
-        code = generate_otp()
-        session.add(
-            PasswordResetCode(
-                user_id=user.id,
-                code_hash=hash_token(code),
-                expires_at=utcnow() + timedelta(minutes=settings.password_reset_ttl_minutes),
-            )
-        )
-        await session.commit()
-        background.add_task(
-            send_email,
-            email,
-            "Your password reset code",
-            f"Your Video Synopsis password reset code is: {code}\n\n"
-            f"It expires in {settings.password_reset_ttl_minutes} minutes. "
-            "If you didn't request this, you can ignore this email.",
-        )
-
-    return {"status": "accepted"}
-
-
-@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
-async def reset_password(body: ResetIn, session: AsyncSession = Depends(get_session)):
-    """Verify the emailed reset code and set a new password (kills all sessions)."""
-    email = normalize_email(body.email)
-    user = (await session.execute(select(User).where(User.email == email))).scalar_one_or_none()
-    if user is None:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code.")
-
-    row = (
-        await session.execute(
-            select(PasswordResetCode)
-            .where(PasswordResetCode.user_id == user.id, PasswordResetCode.used_at.is_(None))
-            .order_by(PasswordResetCode.created_at.desc())
-        )
-    ).scalars().first()
-    if row is None or row.expires_at < utcnow() or row.attempts >= settings.email_otp_max_attempts:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code. Request a new one.")
-
-    if hash_token(body.code.strip()) != row.code_hash:
-        row.attempts += 1
-        await session.commit()
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Incorrect code.")
-
-    row.used_at = utcnow()
-    user.password_hash = hash_password(body.password)
-    user.token_version += 1  # kill existing access tokens
-    await session.execute(
-        update(Session).where(Session.user_id == user.id, Session.revoked_at.is_(None))
-        .values(revoked_at=utcnow())
-    )
-    await session.commit()
-    resp = Response(status_code=status.HTTP_204_NO_CONTENT)
-    _clear_auth_cookies(resp)
-    return resp
